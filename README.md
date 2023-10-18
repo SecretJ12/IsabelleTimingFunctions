@@ -3,5 +3,5 @@ The goal of the bachelor thesis is to extend the Proof Assistant Isabelle by the
 
 The file implements the following command
 ```Isabelle
-define_time_fun [NameOfTimingFunction:] {NameOfFunction}
+define_time_fun {NameOfFunction}
 ```

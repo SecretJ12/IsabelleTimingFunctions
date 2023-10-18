@@ -30,7 +30,7 @@ and
 \<leadsto> (T_f (Suc n) = T_f n + 1)\<close>
 
 text \<open>The same function should be generated with the following command\<close>
-define_time_fun T_f: f
+define_time_fun f
 
 subsection \<open>Example proof\<close>
 lemma "T_f n = Suc n"
