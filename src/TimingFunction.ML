@@ -42,7 +42,7 @@ fun func_to_time (info: Function.info) =
   transform_info info;
 
 fun register_time_func theory (info: Function.info) =
-  theory |> Local_Theory.declaration {syntax = false, pervasive = false}
+  theory |> Local_Theory.declaration {syntax = false, pervasive = false, pos = \<^here>}
           (fn phi => Function_Common.add_function_data (Function_Common.transform_function_data phi info));
 
 fun convert func (lthy: local_theory) =
