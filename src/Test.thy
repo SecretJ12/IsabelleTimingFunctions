@@ -1,5 +1,5 @@
 theory Test
-  imports TimingFunction
+  imports "TimingFunction"
 begin
 
 chapter \<open>Definition on example\<close>
@@ -29,10 +29,17 @@ and
 = (T_f (Suc n) = T_f n + 4)
 \<leadsto> (T_f (Suc n) = T_f n + 1)\<close>
 
-text \<open>The same function should be generated with the following command\<close>
-define_time_fun f
+fun g :: "nat \<Rightarrow> nat" where
+  "g 0 = 0"
+| "g (Suc n) = Suc n + g n"
 
-subsection \<open>Example proof\<close>
+text \<open>The same function should be generated with the following command\<close>
+define_time_fun g
+
+subsection \<open>Function T_g should now be defined\<close>
+value "T_g 1"
+
+subsection \<open>Example proof (Conversion still TODO)\<close>
 lemma "T_f n = Suc n"
   by (induction n) simp+
 

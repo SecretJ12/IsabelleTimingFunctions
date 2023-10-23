@@ -3,7 +3,7 @@ fun separate sep prts =
 
 fun terms_of_info (info: Function.info) =
 let
-  val {simps, ...} = info;
+  val {simps, ...} = info
 in
   map Thm.prop_of (case simps of SOME s => s | NONE => [])
 end;
@@ -12,7 +12,7 @@ fun print_fun ctxt title (info: Function.info) =
 let
   val {defname, fs, ...} = info;
   val name = Binding.name_of defname;
-  val typ = (case fs of (Const (_, typ)::_) => typ | _ => raise Fail "Type of function not implemented")
+  val typ = (case fs of (Const (_, typ)::_) => typ | (Free (_, typ)::_) => typ | _ => raise Fail "Type of function not implemented")
   val trms = terms_of_info info;
   val header_beg = Pretty.str ("fun " ^ name ^ " :: ");
   val header_end = Pretty.str (" where\n  ");
@@ -23,38 +23,42 @@ in
   Pretty.writeln (Pretty.text_fold [Pretty.str (title ^ "\n"), Pretty.item lines])
 end;
 
-fun transform_info ({add_simps, case_names, fnames, fs, R, dom, psimps, pinducts,
-  simps, inducts, termination, totality, defname, is_partial, cases, pelims, elims} : Function.info) =
-    let
-      fun name n = Binding.make ("T_" ^ Binding.name_of n, Position.none)
-      fun conv thm = thm
-    in
-      { add_simps = add_simps, case_names = case_names, fnames = map name fnames,
-        fs = fs, R = R, dom = dom, psimps = psimps,
-        pinducts = pinducts, simps = Option.map (fn s => map conv s) simps,
-        inducts = inducts, termination = termination,
-        totality = totality, defname = name defname,
-        is_partial = is_partial, cases = cases,
-        pelims = pelims, elims = elims }
-    end
+fun register_time_func (lthy: local_theory) (term: term) (info: Function.info) =
+  let
+    val name = Term.term_name term
+    val timing_name = "T_" ^ name
+    val (full_name, _) = term |> dest_Const
 
-fun func_to_time (info: Function.info) =
-  transform_info info;
+    val bindings = [(Binding.name timing_name, NONE, NoSyn)]
+    val fun_config = Function_Common.FunctionConfig
+      {sequential=true, default=NONE, domintros=false, partials=false}
+    val terms = terms_of_info info;
+    fun pat_completeness_auto ctxt =
+      Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
 
-fun register_time_func theory (info: Function.info) =
-  theory |> Local_Theory.declaration {syntax = false, pervasive = false, pos = \<^here>}
-          (fn phi => Function_Common.add_function_data (Function_Common.transform_function_data phi info));
+    fun copy (Var(ixn,T)) = Free (fst ixn, T)
+      | copy (c as Const(nm,T)) = if member (op=) [full_name] nm then Free (timing_name,T) else c
+      | copy t = t
+    val timing_terms = (map (map_aterms copy) terms)
+
+    val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) timing_terms
+    val (_, lthy') =
+      Function.add_function bindings specs fun_config pat_completeness_auto lthy
+    val (info, lthy'') =
+      Function.prove_termination NONE (Lexicographic_Order.lexicographic_order_tac false lthy') lthy'
+  in
+    (info, lthy'')
+  end;
 
 fun convert func (lthy: local_theory) =
 let
-val ctxt = Config.put show_question_marks false lthy
-val info = Function.get_info lthy (Syntax.read_term lthy func)
-val time_info = func_to_time info
-in (print_fun ctxt "Original function:" info; print_fun ctxt "Timing function:" time_info; register_time_func lthy time_info)
+val fterm = Syntax.read_term lthy func
+val info = Function.get_info lthy fterm
+val (time_info, lthy') = register_time_func lthy fterm info
+val print_ctxt = Config.put show_question_marks false lthy'
+in (print_fun print_ctxt "Original function:" info; print_fun print_ctxt "Timing function:" time_info; lthy')
 end;
 
 Outer_Syntax.local_theory @{command_keyword "define_time_fun"}
 "Defines runtime function of a function"
   (Parse.prop >> (fn func => convert func));
-
-
