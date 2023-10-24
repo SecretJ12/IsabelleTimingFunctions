@@ -1,3 +1,5 @@
+fun to_time t = t
+
 fun separate sep prts =
   flat (Library.separate [Pretty.str sep] (map single prts));
 
@@ -29,9 +31,10 @@ fun register_time_func (lthy: local_theory) (term: term) (info: Function.info) =
     val timing_name = "T_" ^ name
     val (full_name, _) = term |> dest_Const
 
+    val {is_partial, ...} = info
     val bindings = [(Binding.name timing_name, NONE, NoSyn)]
     val fun_config = Function_Common.FunctionConfig
-      {sequential=true, default=NONE, domintros=false, partials=false}
+      {sequential=false, default=NONE, domintros=false, partials=is_partial}
     val terms = terms_of_info info;
     fun pat_completeness_auto ctxt =
       Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
@@ -41,7 +44,9 @@ fun register_time_func (lthy: local_theory) (term: term) (info: Function.info) =
       | fixTerms t = t
     fun fixTypes (TVar ((t, _), T)) = TFree (t, T)
       | fixTypes t = t
-    val timing_terms = (map (map_aterms fixTerms #> map_types (map_atyps fixTypes)) terms)
+    fun parseTerms ((Const pT) $ (eq $ l $ r)) = (Const pT) $ (eq $ l $ to_time r)
+      | parseTerms _ = raise Fail "Invalid term to convert"
+    val timing_terms = (map (map_aterms fixTerms #> map_types (map_atyps fixTypes) #> parseTerms) terms)
 
     val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) timing_terms
     val (_, lthy') =
