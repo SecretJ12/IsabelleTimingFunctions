@@ -36,10 +36,12 @@ fun register_time_func (lthy: local_theory) (term: term) (info: Function.info) =
     fun pat_completeness_auto ctxt =
       Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
 
-    fun copy (Var(ixn,T)) = Free (fst ixn, T)
-      | copy (c as Const(nm,T)) = if member (op=) [full_name] nm then Free (timing_name,T) else c
-      | copy t = t
-    val timing_terms = (map (map_aterms copy) terms)
+    fun fixTerms (Var(ixn,T)) = Free (fst ixn, T)
+      | fixTerms (c as Const(nm,T)) = if member (op=) [full_name] nm then Free (timing_name,T) else c
+      | fixTerms t = t
+    fun fixTypes (TVar ((t, _), T)) = TFree (t, T)
+      | fixTypes t = t
+    val timing_terms = (map (map_aterms fixTerms #> map_types (map_atyps fixTypes)) terms)
 
     val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) timing_terms
     val (_, lthy') =
@@ -59,6 +61,7 @@ val print_ctxt = Config.put show_question_marks false lthy'
 in (print_fun print_ctxt "Original function:" info; print_fun print_ctxt "Timing function:" time_info; lthy')
 end;
 
+(* TODO can't deal with non automatic termination *)
 Outer_Syntax.local_theory @{command_keyword "define_time_fun"}
 "Defines runtime function of a function"
   (Parse.prop >> (fn func => convert func));
