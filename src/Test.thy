@@ -14,6 +14,7 @@ fun T_f :: "nat \<Rightarrow> nat" where
   "T_f 0 = 1"
 | "T_f (Suc n) = T_f n + 1"
 
+
 text \<open>Hereby we run through the following steps:
 \<E>\<lbrakk>f 0 = 0\<rbrakk>
 = (T_f 0 = \<T>\<lbrakk>0] + 1)
@@ -30,10 +31,10 @@ and
 \<leadsto> (T_f (Suc n) = T_f n + 1)\<close>
 
 fun g :: "nat \<Rightarrow> nat" where
-  "g 0 = 0"
+  "g 0 = 1"
 | "g (Suc n) = Suc n + g n"
 
-text \<open>The same function should be generated with the following command\<close>
+text \<open>The same function should be generated with the following command\<close> (* TODO *)
 define_time_fun g
 
 subsection \<open>Function T_g should now be defined\<close>
@@ -42,5 +43,11 @@ value "T_g 1"
 subsection \<open>Example proof (Conversion still TODO)\<close>
 lemma "T_f n = Suc n"
   by (induction n) simp+
+
+(* Simple working example *)
+fun h :: "'a list \<Rightarrow> nat" where
+  "h [] = 7"
+| "h (_#xs) = h xs"
+define_time_fun h
 
 end
