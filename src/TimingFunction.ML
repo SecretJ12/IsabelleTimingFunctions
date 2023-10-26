@@ -22,15 +22,27 @@ val zero = Const ("Groups.zero_class.zero", natTyp)
 val one = Const ("Groups.one_class.one", natTyp);
 
 (* change type of the equality term from _ \<Rightarrow> _ \<Rightarrow> bool to nat \<Rightarrow> nat \<Rightarrow> bool *)
-fun change_eq_typ' (TFree _) = natTyp
-  | change_eq_typ' t = t
-fun change_eq_typ (t as Type (n, [T1, T2])) = (if n = "fun" then Type (n, [change_eq_typ' T1, change_eq_typ T2]) else t)
+fun change_eq_typ (t as Type (n, [_, T2])) = (if n = "fun" then Type (n, [natTyp, change_eq_typ T2]) else t)
   | change_eq_typ t = t;
 
 (* change type of original function to new type (_ \<Rightarrow> ... \<Rightarrow> _ to _ \<Rightarrow> ... \<Rightarrow> nat) *)
 fun change_typ (t as Type (n, [T1, T2])) = (if n = "fun" then Type (n, [T1, change_typ T2]) else t)
-  | change_typ (TVar _) = natTyp
-  | change_typ t = t
+  | change_typ _ = natTyp
+
+val _ =
+Type ("fun", [
+    Type ("List.list", [
+        TVar (("'a", 0), [
+            "HOL.type"
+        ])
+    ]), Type ("fun", [
+        Type ("List.list", [
+            TVar (("'a", 0), [
+                "HOL.type"
+            ])
+        ]), Type ("HOL.bool", [])
+    ])
+]);
 
 (* helper function to add two natural, optional terms *)
 val plusTyp = Type ("fun", [natTyp, Type ("fun", [natTyp, natTyp])])
@@ -47,8 +59,10 @@ fun replace_fun ctxt (t1 $ t2) = (case replace_fun ctxt t1 of SOME t => SOME (t 
   | replace_fun _ _ = NONE
 
 (* traverses through the term and keeps nontrivial elements *)
-fun to_time' ctxt (t as _ $ _) = (if is_trivial_fun ctxt t then NONE else replace_fun ctxt t)
+fun to_time' ctxt (t as _ $ _) = plus (if is_trivial_fun ctxt t then NONE else replace_fun ctxt t) (to_time_el ctxt t)
   | to_time' _ _ = NONE
+and to_time_el ctxt (t1 $ t2) = plus (to_time_el ctxt t1) (to_time' ctxt t2)
+  | to_time_el _ _ = NONE
 (* Converts the right side of an equation to it's running time function equivalent, current state:
     - Converts highest layer if its timing function if nontrivial, ignores if trivial
     TODO:
