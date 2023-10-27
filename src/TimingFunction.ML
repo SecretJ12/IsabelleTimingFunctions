@@ -33,6 +33,7 @@ fun change_eq_typ (t as Type (n, [_, T2])) = (if n = "fun" then Type (n, [natTyp
 fun change_typ (t as Type (n, [T1, T2])) = (if n = "fun" then Type (n, [T1, change_typ T2]) else t)
   | change_typ _ = natTyp
 
+(* Convert the function name to it's time function and change typ *)
 fun fun_to_time orig (Const(nm,T)) =
 let
   val name = Term.term_name orig
@@ -50,8 +51,10 @@ fun plus (SOME a) (SOME b) = SOME (Const ("Groups.plus_class.plus", plusTyp) $ a
   | plus (SOME a) NONE = SOME a
   | plus NONE (SOME b) = SOME b
   | plus NONE NONE = NONE
+(* converts an optional term to term with zero as default *)
 fun opt_term (SOME a) = a
   | opt_term NONE = zero
+(* Compose an if term if the true and false terms are not NONE *)
 fun if_term _ NONE NONE = NONE
   | if_term cond t f =
   SOME ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ cond $ (opt_term t) $ (opt_term f))
@@ -69,14 +72,19 @@ fun to_time' ctxt orig (t as _ $ _) =
   (if is_if t then to_time_if ctxt orig t else  
     plus (if is_trivial_fun ctxt t then NONE else SOME (replace_fun ctxt orig t)) (to_time_el ctxt orig t))
   | to_time' _ _ _ = NONE
+(* processes the arguments of a function *)
 and to_time_el ctxt orig (t1 $ t2) = plus (to_time_el ctxt orig t1) (to_time' ctxt orig t2)
   | to_time_el _ _ _ = NONE
+(* processes an if term *)
 and to_time_if ctxt orig (_ $ cond $ t $ f) = plus (if_term cond (to_time' ctxt orig t) (to_time' ctxt orig f)) (to_time' ctxt orig cond)
   | to_time_if _ _ _ = NONE
 (* Converts the right side of an equation to it's running time function equivalent, current state:
-    - Converts highest layer if its timing function if nontrivial, ignores if trivial
+    - Converts constants
+    - Converts own function by replacing with timing equivalent and adding timing equivalent of arguments
+    - Ignores trivial terms
+    - Converts if terms
     TODO:
-    - also add all the arguments of the top level function
+    - Convert other functions to their timing equivalent
 *)
 fun to_time ctxt orig t = opt_term (plus (SOME one) (to_time' ctxt orig t))
 
@@ -117,6 +125,8 @@ fun register_time_func (lthy: local_theory) (term: term) (info: Function.info) =
     fun pat_completeness_auto ctxt =
       Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
 
+    val ctxt = (Proof_Context.theory_of lthy)
+
     (* Variables in simp terms need to be adjusted:
         - Var by their Free equivalent
         - Function itself by its timing function:
@@ -132,7 +142,6 @@ fun register_time_func (lthy: local_theory) (term: term) (info: Function.info) =
         - Change type of equation from "_ \<Rightarrow> _ \<Rightarrow> bool" to "nat \<Rightarrow> nat \<Rightarrow> bool"
         - Run the to_time function on the right side of the equation to convert it
     *)
-    val ctxt = (Proof_Context.theory_of lthy)
     fun parseTerms ((Const pT) $ (Const (eqN, eqT) $ l $ r)) = (Const pT) $ (Const (eqN, change_eq_typ eqT) $ (replace_fun ctxt term l) $ to_time ctxt term r)
       | parseTerms _ = raise Fail "Invalid term to convert"
     val timing_terms = (map (map_aterms fixTerms #> map_types (map_atyps fixTypes) #> parseTerms) terms)
