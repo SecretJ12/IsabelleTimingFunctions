@@ -15,6 +15,10 @@ fun is_trivial_fun ctxt (Const T $ _) = (is_trivial ctxt T)
   | is_trivial_fun ctxt (Free T $ _) = (is_trivial ctxt T)
   | is_trivial_fun ctxt (t $ _) = is_trivial_fun ctxt t
   | is_trivial_fun _ _ = true
+(* returns true if it's an if term *)
+fun is_if (t $ _) = is_if t
+  | is_if (Const (n,_)) = (n = "HOL.If")
+  | is_if _ = false
 
 (* some default values to build terms easier *)
 val natTyp = Type ("Nat.nat", [])
@@ -29,27 +33,17 @@ fun change_eq_typ (t as Type (n, [_, T2])) = (if n = "fun" then Type (n, [natTyp
 fun change_typ (t as Type (n, [T1, T2])) = (if n = "fun" then Type (n, [T1, change_typ T2]) else t)
   | change_typ _ = natTyp
 
-val _ =
-Type ("fun", [
-    Type ("List.list", [
-        TVar (("'a", 0), [
-            "HOL.type"
-        ])
-    ]), Type ("fun", [
-        Type ("List.list", [
-            TVar (("'a", 0), [
-                "HOL.type"
-            ])
-        ]), Type ("HOL.bool", [])
-    ])
-]);
-
 (* helper function to add two natural, optional terms *)
 val plusTyp = Type ("fun", [natTyp, Type ("fun", [natTyp, natTyp])])
 fun plus (SOME a) (SOME b) = SOME (Const ("Groups.plus_class.plus", plusTyp) $ a $ b)
   | plus (SOME a) NONE = SOME a
   | plus NONE (SOME b) = SOME b
   | plus NONE NONE = NONE
+fun opt_term (SOME a) = a
+  | opt_term NONE = zero
+fun if_term _ NONE NONE = NONE
+  | if_term cond t f =
+  SOME ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ cond $ (opt_term t) $ (opt_term f))
 
 (* Currently does basically nothing. Should later replace functions by their running time equivalent
     which are not the orignal function (which has already been replaced) *)
@@ -59,16 +53,20 @@ fun replace_fun ctxt (t1 $ t2) = (case replace_fun ctxt t1 of SOME t => SOME (t 
   | replace_fun _ _ = NONE
 
 (* traverses through the term and keeps nontrivial elements *)
-fun to_time' ctxt (t as _ $ _) = plus (if is_trivial_fun ctxt t then NONE else replace_fun ctxt t) (to_time_el ctxt t)
+fun to_time' ctxt (t as _ $ _) =
+  (if is_if t then to_time_if ctxt t else  
+    plus (if is_trivial_fun ctxt t then NONE else replace_fun ctxt t) (to_time_el ctxt t))
   | to_time' _ _ = NONE
 and to_time_el ctxt (t1 $ t2) = plus (to_time_el ctxt t1) (to_time' ctxt t2)
   | to_time_el _ _ = NONE
+and to_time_if ctxt (_ $ cond $ t $ f) = plus (if_term cond (to_time' ctxt t) (to_time' ctxt f)) (to_time' ctxt cond)
+  | to_time_if _ _ = NONE
 (* Converts the right side of an equation to it's running time function equivalent, current state:
     - Converts highest layer if its timing function if nontrivial, ignores if trivial
     TODO:
     - also add all the arguments of the top level function
 *)
-fun to_time ctxt t = (case plus (SOME one) (to_time' ctxt t) of SOME t => t | _ => t)
+fun to_time ctxt t = opt_term (plus (SOME one) (to_time' ctxt t))
 
 fun separate sep prts =
   flat (Library.separate [Pretty.str sep] (map single prts));
@@ -128,6 +126,8 @@ fun register_time_func (lthy: local_theory) (term: term) (info: Function.info) =
     fun parseTerms ((Const pT) $ (Const (eqN, eqT) $ l $ r)) = (Const pT) $ (Const (eqN, change_eq_typ eqT) $ l $ to_time (Proof_Context.theory_of lthy) r)
       | parseTerms _ = raise Fail "Invalid term to convert"
     val timing_terms = (map (map_aterms fixTerms #> map_types (map_atyps fixTypes) #> parseTerms) terms)
+    val _ = @{print} terms
+    val _ = @{print} timing_terms
 
     val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) timing_terms
     val (_, lthy') =
