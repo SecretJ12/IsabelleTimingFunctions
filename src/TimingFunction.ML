@@ -7,7 +7,7 @@ fun is_constr thy (n, T) =
 
 (* Trivial should be everything which is a constructor or something like a constant or variable *)
 (* TODO find better way to detect constants *)
-val customTrivials = ["Groups.plus_class.plus", "Num.numeral_class.numeral"]
+val customTrivials = ["Groups.plus_class.plus", "Num.numeral_class.numeral", "Orderings.ord_class.less", "HOL.Not"]
 fun is_trivial ctxt (n, (T as Type (Tn,_))) = (Tn <> "fun" orelse is_constr ctxt (n, T) orelse exists (fn c => c = n) customTrivials)
   | is_trivial _ _  = false
 (* single terms are always assumed as trivial, only concatenated could be not trivial *)
@@ -33,6 +33,17 @@ fun change_eq_typ (t as Type (n, [_, T2])) = (if n = "fun" then Type (n, [natTyp
 fun change_typ (t as Type (n, [T1, T2])) = (if n = "fun" then Type (n, [T1, change_typ T2]) else t)
   | change_typ _ = natTyp
 
+fun fun_to_time orig (Const(nm,T)) =
+let
+  val name = Term.term_name orig
+  val timing_name = "T_" ^ name
+  val (full_name, _) = orig |> dest_Const
+in
+  if nm = full_name then Free (timing_name,change_typ T) else
+    raise Fail ("Converting other functions not implemented: " ^ nm)
+end
+| fun_to_time _ t = t
+
 (* helper function to add two natural, optional terms *)
 val plusTyp = Type ("fun", [natTyp, Type ("fun", [natTyp, natTyp])])
 fun plus (SOME a) (SOME b) = SOME (Const ("Groups.plus_class.plus", plusTyp) $ a $ b)
@@ -47,26 +58,27 @@ fun if_term _ NONE NONE = NONE
 
 (* Currently does basically nothing. Should later replace functions by their running time equivalent
     which are not the orignal function (which has already been replaced) *)
-fun replace_fun ctxt (t1 $ t2) = (case replace_fun ctxt t1 of SOME t => SOME (t $ t2) | _ => NONE)
-  | replace_fun _ (Const (n, T)) = SOME (Const (n, change_typ T))
-  | replace_fun _ (Free (n, T)) = SOME (Free (n, change_typ T))
-  | replace_fun _ _ = NONE
+fun replace_fun _ orig ((c as Const _) $ t2) = (fun_to_time orig c) $ t2
+  | replace_fun ctxt orig (t1 $ t2) = replace_fun ctxt orig t1 $ t2
+  | replace_fun _ _ (Const (n,T)) = Const (n, change_typ T)
+  | replace_fun _ _ (Free (n, T)) = Free (n, change_typ T)
+  | replace_fun _ _ _ = raise Fail "No valid term to replace fun"
 
 (* traverses through the term and keeps nontrivial elements *)
-fun to_time' ctxt (t as _ $ _) =
-  (if is_if t then to_time_if ctxt t else  
-    plus (if is_trivial_fun ctxt t then NONE else replace_fun ctxt t) (to_time_el ctxt t))
-  | to_time' _ _ = NONE
-and to_time_el ctxt (t1 $ t2) = plus (to_time_el ctxt t1) (to_time' ctxt t2)
-  | to_time_el _ _ = NONE
-and to_time_if ctxt (_ $ cond $ t $ f) = plus (if_term cond (to_time' ctxt t) (to_time' ctxt f)) (to_time' ctxt cond)
-  | to_time_if _ _ = NONE
+fun to_time' ctxt orig (t as _ $ _) =
+  (if is_if t then to_time_if ctxt orig t else  
+    plus (if is_trivial_fun ctxt t then NONE else SOME (replace_fun ctxt orig t)) (to_time_el ctxt orig t))
+  | to_time' _ _ _ = NONE
+and to_time_el ctxt orig (t1 $ t2) = plus (to_time_el ctxt orig t1) (to_time' ctxt orig t2)
+  | to_time_el _ _ _ = NONE
+and to_time_if ctxt orig (_ $ cond $ t $ f) = plus (if_term cond (to_time' ctxt orig t) (to_time' ctxt orig f)) (to_time' ctxt orig cond)
+  | to_time_if _ _ _ = NONE
 (* Converts the right side of an equation to it's running time function equivalent, current state:
     - Converts highest layer if its timing function if nontrivial, ignores if trivial
     TODO:
     - also add all the arguments of the top level function
 *)
-fun to_time ctxt t = opt_term (plus (SOME one) (to_time' ctxt t))
+fun to_time ctxt orig t = opt_term (plus (SOME one) (to_time' ctxt orig t))
 
 fun separate sep prts =
   flat (Library.separate [Pretty.str sep] (map single prts));
@@ -97,8 +109,6 @@ fun register_time_func (lthy: local_theory) (term: term) (info: Function.info) =
   let
     val name = Term.term_name term
     val timing_name = "T_" ^ name
-    val (full_name, _) = term |> dest_Const
-
     val {is_partial, ...} = info
     val bindings = [(Binding.name timing_name, NONE, NoSyn)]
     val fun_config = Function_Common.FunctionConfig
@@ -114,7 +124,6 @@ fun register_time_func (lthy: local_theory) (term: term) (info: Function.info) =
           - Change type from "_ \<Rightarrow> \<dots> \<Rightarrow> _" to "_ \<Rightarrow> \<dots> \<Rightarrow> nat"
     *)
     fun fixTerms (Var(ixn,T)) = Free (fst ixn, T)
-      | fixTerms (c as Const(nm,T)) = if member (op=) [full_name] nm then Free (timing_name,change_typ T) else c
       | fixTerms t = t
     (* In types we also need to use the Free equivalent *)
     fun fixTypes (TVar ((t, _), T)) = TFree (t, T)
@@ -123,7 +132,8 @@ fun register_time_func (lthy: local_theory) (term: term) (info: Function.info) =
         - Change type of equation from "_ \<Rightarrow> _ \<Rightarrow> bool" to "nat \<Rightarrow> nat \<Rightarrow> bool"
         - Run the to_time function on the right side of the equation to convert it
     *)
-    fun parseTerms ((Const pT) $ (Const (eqN, eqT) $ l $ r)) = (Const pT) $ (Const (eqN, change_eq_typ eqT) $ l $ to_time (Proof_Context.theory_of lthy) r)
+    val ctxt = (Proof_Context.theory_of lthy)
+    fun parseTerms ((Const pT) $ (Const (eqN, eqT) $ l $ r)) = (Const pT) $ (Const (eqN, change_eq_typ eqT) $ (replace_fun ctxt term l) $ to_time ctxt term r)
       | parseTerms _ = raise Fail "Invalid term to convert"
     val timing_terms = (map (map_aterms fixTerms #> map_types (map_atyps fixTypes) #> parseTerms) terms)
     val _ = @{print} terms
