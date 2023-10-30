@@ -13,8 +13,7 @@ datatype timing_term =
 
 (* Trivial should be everything which is a constructor or something like a constant or variable *)
 (* TODO find better way to detect constants *)
-val customTrivials = ["Groups.plus_class.plus", "Num.numeral_class.numeral", "Orderings.ord_class.less", "HOL.Not"]
-fun is_trivial ctxt (n, (T as Type (Tn,_))) = (Tn <> "fun" orelse is_constr ctxt (n, T) orelse exists (fn c => c = n) customTrivials)
+fun is_trivial ctxt (n, (T as Type (Tn,_))) = (Tn <> "fun" orelse is_constr ctxt (n, T) orelse is_trivial_decl ctxt n)
   | is_trivial _ _  = false
 (* single terms are always assumed as trivial, only concatenated could be not trivial *)
 fun is_trivial_fun ctxt (Const T $ _) = (is_trivial ctxt T)
@@ -94,14 +93,14 @@ fun replace_fun _ orig ((c as Const _) $ t2) = (fun_to_time orig c) $ t2
 (* traverses through the term and keeps nontrivial elements *)
 fun to_time' ctxt orig (t as _ $ _) =
   (if is_if t then to_time_if ctxt orig t else  
-    PLUS ((if is_trivial_fun ctxt t then CONST else TERM (replace_fun ctxt orig t)), (to_time_el ctxt orig t)))
+    PLUS (if is_trivial_fun ctxt t then CONST else TERM (replace_fun ctxt orig t), to_time_el ctxt orig t))
   | to_time' _ _ _ = CONST
 (* processes the arguments of a function *)
-and to_time_el ctxt orig ((t1 as (_ $ _)) $ t2) = PLUS ((to_time_el ctxt orig t1), (to_time' ctxt orig t2))
+and to_time_el ctxt orig ((t1 as (_ $ _)) $ t2) = PLUS (to_time_el ctxt orig t1, to_time' ctxt orig t2)
   | to_time_el ctxt orig (_ $ t2) = to_time' ctxt orig t2
   | to_time_el _ _ _ = CONST
 (* processes an if term *)
-and to_time_if ctxt orig (_ $ cond $ t $ f) = PLUS ((IF (cond, (to_time' ctxt orig t), (to_time' ctxt orig f))), (to_time' ctxt orig cond))
+and to_time_if ctxt orig (_ $ cond $ t $ f) = PLUS (IF (cond, to_time' ctxt orig t, to_time' ctxt orig f), to_time' ctxt orig cond)
   | to_time_if _ _ _ = raise Fail "Invalid if term"
 (* Converts the right side of an equation to it's running time function equivalent, current state:
     - Converts constants
@@ -111,7 +110,7 @@ and to_time_if ctxt orig (_ $ cond $ t $ f) = PLUS ((IF (cond, (to_time' ctxt or
     TODO:
     - Convert other functions to their timing equivalent
 *)
-fun to_time ctxt orig asymp t = opt_term (plus (SOME one) ((if asymp then abuild else build) (to_time' ctxt orig t)))
+fun to_time ctxt orig asymp t = opt_term ((if asymp then abuild else build) (PLUS (TERM one, to_time' ctxt orig t)))
 
 fun separate sep prts =
   flat (Library.separate [Pretty.str sep] (map single prts));

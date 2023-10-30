@@ -35,7 +35,7 @@ fun g :: "nat \<Rightarrow> nat" where
 | "g (Suc n) = g n"
 
 text \<open>The same function should be generated with the following command\<close>
-define_atime_fun g
+define_time_fun g
 
 subsection \<open>Function T_g should now be defined\<close>
 value "T_g 1"
