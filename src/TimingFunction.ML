@@ -1,9 +1,15 @@
 fun get_constrs thy (Type (n, _)) = these (BNF_LFP_Compat.get_constrs thy n)
-    | get_constrs _ _ = []
+  | get_constrs _ _ = []
 (* returns if something is a constructor (found in smt_normalize.ML) *)
 fun is_constr thy (n, T) =
     let fun match (m, U) = m = n andalso Sign.typ_instance thy (T, U)
     in can (the o find_first match o get_constrs thy o Term.body_type) T end
+
+datatype timing_term =
+  CONST
+| TERM of term
+| PLUS of (timing_term * timing_term)
+| IF of (term * timing_term * timing_term)
 
 (* Trivial should be everything which is a constructor or something like a constant or variable *)
 (* TODO find better way to detect constants *)
@@ -45,19 +51,37 @@ in
 end
 | fun_to_time _ t = t
 
-(* helper function to add two natural, optional terms *)
+(* helper function to add two natural, optional terms - normal and asymptotic version *)
 val plusTyp = Type ("fun", [natTyp, Type ("fun", [natTyp, natTyp])])
 fun plus (SOME a) (SOME b) = SOME (Const ("Groups.plus_class.plus", plusTyp) $ a $ b)
-  | plus (SOME a) NONE = SOME a
-  | plus NONE (SOME b) = SOME b
-  | plus NONE NONE = NONE
-(* converts an optional term to term with zero as default *)
-fun opt_term (SOME a) = a
-  | opt_term NONE = zero
-(* Compose an if term if the true and false terms are not NONE *)
-fun if_term _ NONE NONE = NONE
-  | if_term cond t f =
+  | plus (SOME a) NONE = SOME (Const ("Groups.plus_class.plus", plusTyp) $ a $ one)
+  | plus NONE (SOME b) = SOME (Const ("Groups.plus_class.plus", plusTyp) $ one $ b)
+  | plus NONE NONE = SOME (Const ("Groups.plus_class.plus", plusTyp) $ one $ one)
+fun aplus (SOME a) (SOME b) = SOME (Const ("Groups.plus_class.plus", plusTyp) $ a $ b)
+  | aplus (SOME a) NONE = SOME a
+  | aplus NONE (SOME b) = SOME b
+  | aplus NONE NONE = NONE
+fun opt_term NONE = one
+  | opt_term (SOME t) = t
+fun aopt_term NONE = zero
+  | aopt_term (SOME t) = t
+(* Compose an if term - normal and asymptotic version *)
+fun if_term cond t f =
   SOME ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ cond $ (opt_term t) $ (opt_term f))
+(* Compose an if term if the true and false terms are not NONE *)
+fun aif_term _ NONE NONE = NONE
+  | aif_term cond t f =
+  SOME ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ cond $ (aopt_term t) $ (aopt_term f));
+
+(* builds term from timing_term *)
+fun build CONST = SOME one
+  | build (TERM term) = SOME term
+  | build (PLUS (t1, t2)) = plus (build t1) (build t2)
+  | build (IF (cond, t, f)) = if_term cond (build t) (build f);
+fun abuild CONST = NONE
+  | abuild (TERM term) = SOME term
+  | abuild (PLUS (t1, t2)) = aplus (abuild t1) (abuild t2)
+  | abuild (IF (cond, t, f)) = aif_term cond (abuild t) (abuild f);
 
 (* Currently does basically nothing. Should later replace functions by their running time equivalent
     which are not the orignal function (which has already been replaced) *)
@@ -70,14 +94,15 @@ fun replace_fun _ orig ((c as Const _) $ t2) = (fun_to_time orig c) $ t2
 (* traverses through the term and keeps nontrivial elements *)
 fun to_time' ctxt orig (t as _ $ _) =
   (if is_if t then to_time_if ctxt orig t else  
-    plus (if is_trivial_fun ctxt t then NONE else SOME (replace_fun ctxt orig t)) (to_time_el ctxt orig t))
-  | to_time' _ _ _ = NONE
+    PLUS ((if is_trivial_fun ctxt t then CONST else TERM (replace_fun ctxt orig t)), (to_time_el ctxt orig t)))
+  | to_time' _ _ _ = CONST
 (* processes the arguments of a function *)
-and to_time_el ctxt orig (t1 $ t2) = plus (to_time_el ctxt orig t1) (to_time' ctxt orig t2)
-  | to_time_el _ _ _ = NONE
+and to_time_el ctxt orig ((t1 as (_ $ _)) $ t2) = PLUS ((to_time_el ctxt orig t1), (to_time' ctxt orig t2))
+  | to_time_el ctxt orig (_ $ t2) = to_time' ctxt orig t2
+  | to_time_el _ _ _ = CONST
 (* processes an if term *)
-and to_time_if ctxt orig (_ $ cond $ t $ f) = plus (if_term cond (to_time' ctxt orig t) (to_time' ctxt orig f)) (to_time' ctxt orig cond)
-  | to_time_if _ _ _ = NONE
+and to_time_if ctxt orig (_ $ cond $ t $ f) = PLUS ((IF (cond, (to_time' ctxt orig t), (to_time' ctxt orig f))), (to_time' ctxt orig cond))
+  | to_time_if _ _ _ = raise Fail "Invalid if term"
 (* Converts the right side of an equation to it's running time function equivalent, current state:
     - Converts constants
     - Converts own function by replacing with timing equivalent and adding timing equivalent of arguments
@@ -86,7 +111,7 @@ and to_time_if ctxt orig (_ $ cond $ t $ f) = plus (if_term cond (to_time' ctxt 
     TODO:
     - Convert other functions to their timing equivalent
 *)
-fun to_time ctxt orig t = opt_term (plus (SOME one) (to_time' ctxt orig t))
+fun to_time ctxt orig asymp t = opt_term (plus (SOME one) ((if asymp then abuild else build) (to_time' ctxt orig t)))
 
 fun separate sep prts =
   flat (Library.separate [Pretty.str sep] (map single prts));
@@ -113,7 +138,7 @@ in
   Pretty.writeln (Pretty.text_fold [Pretty.str (title ^ "\n"), Pretty.item lines])
 end;
 
-fun register_time_func (lthy: local_theory) (term: term) (info: Function.info) =
+fun register_time_func (lthy: local_theory) (term: term) asymp (info: Function.info) =
   let
     val name = Term.term_name term
     val timing_name = "T_" ^ name
@@ -142,7 +167,8 @@ fun register_time_func (lthy: local_theory) (term: term) (info: Function.info) =
         - Change type of equation from "_ \<Rightarrow> _ \<Rightarrow> bool" to "nat \<Rightarrow> nat \<Rightarrow> bool"
         - Run the to_time function on the right side of the equation to convert it
     *)
-    fun parseTerms ((Const pT) $ (Const (eqN, eqT) $ l $ r)) = (Const pT) $ (Const (eqN, change_eq_typ eqT) $ (replace_fun ctxt term l) $ to_time ctxt term r)
+    fun parseTerms ((Const pT) $ (Const (eqN, eqT) $ l $ r)) = (Const pT)
+          $ (Const (eqN, change_eq_typ eqT) $ (replace_fun ctxt term l) $ (to_time ctxt term asymp r))
       | parseTerms _ = raise Fail "Invalid term to convert"
     val timing_terms = (map (map_aterms fixTerms #> map_types (map_atyps fixTypes) #> parseTerms) terms)
     val _ = @{print} terms
@@ -157,11 +183,11 @@ fun register_time_func (lthy: local_theory) (term: term) (info: Function.info) =
     (info, lthy'')
   end;
 
-fun convert func (lthy: local_theory) =
+fun convert func asymp (lthy: local_theory)=
 let
 val fterm = Syntax.read_term lthy func
 val info = Function.get_info lthy fterm
-val (time_info, lthy') = register_time_func lthy fterm info
+val (time_info, lthy') = register_time_func lthy fterm asymp info
 val print_ctxt = Config.put show_question_marks false lthy'
 in (print_fun print_ctxt "Original function:" info; print_fun print_ctxt "Timing function:" time_info; lthy')
 end;
@@ -169,4 +195,8 @@ end;
 (* TODO can't deal with non automatic termination *)
 Outer_Syntax.local_theory @{command_keyword "define_time_fun"}
 "Defines runtime function of a function"
-  (Parse.prop >> (fn func => convert func));
+  (Parse.prop >> (fn func => convert func false));
+(* TODO can't deal with non automatic termination *)
+Outer_Syntax.local_theory @{command_keyword "define_atime_fun"}
+"Defines runtime function of a function"
+  (Parse.prop >> (fn func => convert func true));

@@ -32,10 +32,10 @@ and
 
 fun g :: "nat \<Rightarrow> nat" where
   "g 0 = 1"
-| "g (Suc n) = Suc n + g n"
+| "g (Suc n) = g n"
 
-text \<open>The same function should be generated with the following command\<close> (* TODO *)
-define_time_fun g
+text \<open>The same function should be generated with the following command\<close>
+define_atime_fun g
 
 subsection \<open>Function T_g should now be defined\<close>
 value "T_g 1"
@@ -65,7 +65,7 @@ define_time_fun l
 fun is_odd :: "nat \<Rightarrow> bool" where
   "is_odd 0 = False"
 | "is_odd (Suc n) = (if is_odd n then \<not> (is_odd n) else \<not> (is_odd n))"
-define_time_fun is_odd
+define_atime_fun is_odd
 
 value "(T_is_odd 0, T_is_odd 1, T_is_odd 2, T_is_odd 3)"
 lemma "T_is_odd n = 2^(Suc n) - 1"
