@@ -83,4 +83,18 @@ proof (induction n)
   finally show ?case.
 qed simp
 
+fun add :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
+  "add 0 y = y"
+| "add (Suc x) y = add x (Suc y)"
+fun mul where
+  "mul 0 y = 0"
+| "mul (Suc 0) y = y"
+| "mul (Suc (Suc x)) y = add y (mul (Suc x) y)"
+define_atime_fun mul
+
+lemma [simp]: "T_add n m = Suc n"
+  by (induction n arbitrary: m) auto
+lemma "T_mul (Suc n) m = 1 + n * (Suc (Suc m))"
+  by (induction n arbitrary: m) auto
+
 end
