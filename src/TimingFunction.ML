@@ -60,7 +60,7 @@ fun opt_term NONE = one
 fun aopt_term NONE = zero
   | aopt_term (SOME t) = t
 fun timing_term_term (TERM t) = t
-  | timing_term_term _ = raise Fail "Cannot change non TERM to term"
+  | timing_term_term _ = raise ERROR "Cannot change non TERM to term"
 (* Compose an if term - normal and asymptotic version *)
 fun if_term cond t f =
   SOME ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ cond $ (opt_term t) $ (opt_term f))
@@ -82,10 +82,19 @@ fun fun_name_to_time name =
 let
   fun replace_last_name [n] = ["T_" ^ n]
     | replace_last_name (n::ns) = n :: (replace_last_name ns)
-    | replace_last_name _ = raise Fail "Invalid function with empty name"
+    | replace_last_name _ = raise ERROR "Invalid function with empty name"
   val parts = String.fields (fn s => s = #".") name
 in
   String.concatWith "." (replace_last_name parts)
+end
+(* Check if it's the same theory *)
+fun same_theory t1 t2 =
+let
+  val splitter = (fn s => s = #".")
+  val parts1 = String.fields splitter t1
+  val parts2 = String.fields splitter t2
+in
+  (take (length parts1 - 1) parts1) = (take (length parts2 - 1) parts2)
 end
 
 (* Convert the function name to it's time function and change typ *)
@@ -96,6 +105,7 @@ let
   val (full_name, _) = orig |> dest_Const
 in
   if nm = full_name then TERM (Free (timing_name_orig, change_typ T)) else
+  if not (same_theory full_name nm) then raise ERROR "Can only convert functions of this theory" else
   let
     val timing_name_other = fun_name_to_time nm
   in
@@ -104,15 +114,15 @@ in
           handle _ => FUN (c, [])
   end
 end
-| fun_to_time _ _ _ = raise Fail "Invalid type cannot ne exchanged to time"
+| fun_to_time _ _ _ = raise ERROR "Invalid type cannot ne exchanged to time"
 
 (* Traverses fun term and calls fun_to_time on the first Const element *)
 fun create_fun (TERM t1) t2 = TERM (t1 $ t2)
   | create_fun (FUN (f, ts)) t = FUN (f, ts@[t])
-  | create_fun _ _ = raise Fail "Invalid type to build FUN"
+  | create_fun _ _ = raise ERROR "Invalid type to build FUN"
 fun replace_fun ctxt orig ((c as Const _) $ t2) = create_fun (fun_to_time ctxt orig c) t2
   | replace_fun ctxt orig (t1 $ t2) = create_fun (replace_fun ctxt orig t1) t2
-  | replace_fun _ _ _ = raise Fail "No valid term to replace fun"
+  | replace_fun _ _ _ = raise ERROR "No valid term to replace fun"
 
 (* traverses through the term and keeps nontrivial elements *)
 fun to_time' ctxt orig (t as _ $ _) =
@@ -125,7 +135,7 @@ and to_time_el ctxt orig ((t1 as (_ $ _)) $ t2) = PLUS (to_time_el ctxt orig t1,
   | to_time_el _ _ _ = CONST
 (* processes an if term *)
 and to_time_if ctxt orig (_ $ cond $ t $ f) = PLUS (IF (cond, to_time' ctxt orig t, to_time' ctxt orig f), to_time' ctxt orig cond)
-  | to_time_if _ _ _ = raise Fail "Invalid if term"
+  | to_time_if _ _ _ = raise ERROR "Invalid if term"
 
 fun separate sep prts =
   flat (Library.separate [Pretty.str sep] (map single prts));
@@ -141,7 +151,7 @@ fun fun_pretty ctxt (info: Function.info) =
 let
   val {defname, fs, ...} = info;
   val name = Binding.name_of defname;
-  val typ = (case fs of (Const (_, typ)::_) => typ | (Free (_, typ)::_) => typ | _ => raise Fail "Type of function not implemented")
+  val typ = (case fs of (Const (_, typ)::_) => typ | (Free (_, typ)::_) => typ | _ => raise ERROR "Type of function not implemented")
   val trms = terms_of_info info;
   val header_beg = Pretty.str ("fun " ^ name ^ " :: ");
   val header_end = Pretty.str (" where\n  ");
@@ -183,7 +193,7 @@ fun reg_time_func (lthy: local_theory) (term: term) asymp print =
       | build ctxt (FUN (f, args)) =
       let
         val (_, ctxt') = reg_time_func ctxt f false true
-        val name = (case f of Const (n,_) => n | _ => raise Fail "Invalid term")
+        val name = (case f of Const (n,_) => n | _ => raise ERROR "Invalid term")
         val time_name  = fun_name_to_time name
         val time_term = Syntax.parse_term ctxt' time_name
         fun build_fun [] t = t
@@ -208,7 +218,7 @@ fun reg_time_func (lthy: local_theory) (term: term) asymp print =
       | abuild ctxt (FUN (f, args)) =
       let
         val (_, ctxt') = reg_time_func ctxt f true true
-        val name = (case f of Const (n,_) => n | _ => raise Fail "Invalid term")
+        val name = (case f of Const (n,_) => n | _ => raise ERROR "Invalid term")
         val time_name  = fun_name_to_time name
         val time_term = Syntax.parse_term ctxt' time_name
         fun build_fun [] t = t
@@ -219,12 +229,11 @@ fun reg_time_func (lthy: local_theory) (term: term) asymp print =
         - Converts own function by replacing with timing equivalent and adding timing equivalent of arguments
         - Ignores trivial terms
         - Converts if terms
-        TODO:
-        - Convert other functions to their timing equivalent
+        - Converts other functions to their timing equivalent if they are in the same theory
     *)
     fun to_time ctxt orig asymp t = ((if asymp then abuild else build) ctxt (PLUS (TERM one, to_time' (Proof_Context.theory_of ctxt) orig t))) ||> opt_term 
 
-    val info = Function.get_info lthy term
+    val info = (Function.get_info lthy term) handle Empty => raise ERROR "Cannot find function in current theory"
     val name = Term.term_name term
     val timing_name = "T_" ^ name
     val {is_partial, ...} = info
@@ -238,8 +247,8 @@ fun reg_time_func (lthy: local_theory) (term: term) asymp print =
     (* Variables in simp terms need to be adjusted:
         - Var by their Free equivalent
         - Function itself by its timing function:
-          - Change name from "name" to "T_name"
-          - Change type from "_ \<Rightarrow> \<dots> \<Rightarrow> _" to "_ \<Rightarrow> \<dots> \<Rightarrow> nat"
+        - Change name from "name" to "T_name"
+        - Change type from "_ \<Rightarrow> \<dots> \<Rightarrow> _" to "_ \<Rightarrow> \<dots> \<Rightarrow> nat"
     *)
     fun fixTerms (Var(ixn,T)) = Free (fst ixn, T)
       | fixTerms t = t
@@ -253,7 +262,7 @@ fun reg_time_func (lthy: local_theory) (term: term) asymp print =
     fun convertTerm ctxt ((Const pT) $ (Const (eqN, eqT) $ l $ r)) =
       let val (ctxt, r') = to_time ctxt term asymp r
       in (ctxt, (Const pT) $ (Const (eqN, change_eq_typ eqT) $ timing_term_term (replace_fun (Proof_Context.theory_of lthy) term l) $ r')) end
-      | convertTerm _ _ = raise Fail "Invalid term to convert"
+      | convertTerm _ _ = raise ERROR "Invalid term to convert"
     fun convertTerms ctxt [] = (ctxt, [])
       | convertTerms ctxt (t::ts) =
       let
@@ -267,7 +276,6 @@ fun reg_time_func (lthy: local_theory) (term: term) asymp print =
       Function.add_function bindings specs fun_config pat_completeness_auto lthy'
     val (time_info, lthy''') =
       Function.prove_termination NONE (Lexicographic_Order.lexicographic_order_tac false lthy'') lthy''
-
     
     val print_ctxt = Config.put show_question_marks false lthy'
     val _ = (if print then print_timing print_ctxt info time_info asymp else ())
