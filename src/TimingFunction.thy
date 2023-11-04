@@ -12,4 +12,11 @@ define_time_trivial "(+)"
 define_time_trivial "(<)"
 define_time_trivial "Not"
 
+ML \<open>
+type 'a converter = {
+  const : term \<Rightarrow> 'a
+};
+@{print} "hi"
+\<close>
+
 end

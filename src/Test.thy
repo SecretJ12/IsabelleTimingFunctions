@@ -60,7 +60,7 @@ define_time_fun itrev
 
 fun l :: "nat \<Rightarrow> nat" where
   "l a = (if 0 < a then Suc a else a)"
-define_time_fun l
+define_atime_fun l
 
 fun is_odd :: "nat \<Rightarrow> bool" where
   "is_odd 0 = False"
