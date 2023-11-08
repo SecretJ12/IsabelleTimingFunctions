@@ -7,6 +7,8 @@ val print_timing:  Proof.context -> Function.info -> Function.info -> bool -> un
 val reg_time_func: local_theory -> term -> bool -> bool -> Function.info * local_theory
 val reg_time_func_cmd: string -> bool -> local_theory -> local_theory
 
+val time_dom_tac: Proof.context -> thm -> thm list -> int -> tactic
+
 type 'a converter = {
   constc : local_theory -> term -> (term -> 'a) -> term -> 'a,
   funcc : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a,
@@ -199,6 +201,11 @@ fun convert_term ctxt origin asymp (pT $ (Const (eqN, _) $ l $ r)) =
         $ (((if asymp then to_time_asymp else to_time) ctxt origin) r))
   | convert_term _ _ _ _ = raise ERROR "Invalid term to convert"
 
+(* Tactic to prove "f_dom n" *)
+fun time_dom_tac ctxt induct_rule domintros =
+  Induction.induction_tac ctxt true [] [[]] [] (SOME [induct_rule]) []
+  THEN_ALL_NEW (Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros)
+
 (* Convert given function into a timing function *)
 fun reg_time_func (lthy: local_theory) (term: term) asymp print =
   let
@@ -226,14 +233,28 @@ fun reg_time_func (lthy: local_theory) (term: term) asymp print =
     val {is_partial, ...} = info
     val bindings = [(Binding.name timing_name, NONE, NoSyn)]
     val fun_config = Function_Common.FunctionConfig
-      {sequential=false, default=NONE, domintros=false, partials=is_partial}
+      {sequential=false, default=NONE, domintros=true, partials=is_partial}
     fun pat_completeness_auto ctxt =
       Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
     val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) timing_terms'
     
     (* Register function *)
-    val (_, lthy') =
+    val (time_info, lthy') =
       Function.add_function bindings specs fun_config pat_completeness_auto lthy
+
+    val {inducts, ...} = info
+    val lthy'' = Named_Target.theory_init (Local_Theory.exit_global lthy')
+    val domintros = Proof_Context.get_fact lthy'' (Facts.named "T_g.domintros")
+    val lemma = "T_g_dom n"
+      |> Syntax.read_term lthy''
+      |> HOLogic.mk_Trueprop
+      |> Thm.cterm_of lthy''
+      |> Goal.init
+      |> time_dom_tac lthy'' (Option.valOf inducts |> hd) domintros 1
+      |> Seq.pull
+      (*|> Option.map (fst #> Goal.finish exit_init_lthy)*)
+      |> @{print}
+
     (* Prove termination
         TODO: use right termination schema *)
     val (time_info, lthy'') =
