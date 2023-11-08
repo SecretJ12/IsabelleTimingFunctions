@@ -204,7 +204,7 @@ fun convert_term ctxt origin asymp (pT $ (Const (eqN, _) $ l $ r)) =
 (* Tactic to prove "f_dom n" *)
 fun time_dom_tac ctxt induct_rule domintros =
   Induction.induction_tac ctxt true [] [[]] [] (SOME [induct_rule]) []
-  THEN_ALL_NEW (Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros)
+      THEN_ALL_NEW (Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros)
 
 (* Convert given function into a timing function *)
 fun reg_time_func (lthy: local_theory) (term: term) asymp print =
@@ -219,7 +219,7 @@ fun reg_time_func (lthy: local_theory) (term: term) asymp print =
     (* 2. Find missing functions and define them *)
     val missing_funcs = find_missing lthy term (map right_of_equation terms)
     val lthy = List.foldr (fn (f, ctxt) => reg_time_func ctxt f asymp print |> snd) lthy missing_funcs
-
+    
     (* 3. Convert every equation
       - Change type of toplevel equation from _ \<Rightarrow> _ \<Rightarrow> bool to nat \<Rightarrow> nat \<Rightarrow> bool
       - On left side change name of function to timing function
@@ -239,29 +239,34 @@ fun reg_time_func (lthy: local_theory) (term: term) asymp print =
     val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) timing_terms'
     
     (* Register function *)
-    val (time_info, lthy') =
+    val (_, lthy) =
       Function.add_function bindings specs fun_config pat_completeness_auto lthy
 
+    (* Start proving the termination *)
+    fun args (a$_) = args a |> (fn (x,ar) => (x^"x",x::ar))
+      | args _ = ("x",[])
+    val dom_args = (case terms of ((_ $ (_ $ l $ _))::_) => args l |> snd | _ => raise ERROR "Invalid function")
+    
     val {inducts, ...} = info
-    val lthy'' = Named_Target.theory_init (Local_Theory.exit_global lthy')
-    val domintros = Proof_Context.get_fact lthy'' (Facts.named "T_g.domintros")
-    val lemma = "T_g_dom n"
-      |> Syntax.read_term lthy''
-      |> HOLogic.mk_Trueprop
-      |> Thm.cterm_of lthy''
-      |> Goal.init
-      |> time_dom_tac lthy'' (Option.valOf inducts |> hd) domintros 1
-      |> Seq.pull
-      (*|> Option.map (fst #> Goal.finish exit_init_lthy)*)
-      |> @{print}
+    val induct = (Option.valOf inducts |> hd)               
+    val lthy' = Named_Target.theory_init (Proof_Context.theory_of lthy)
+  
+    val domintros = Proof_Context.get_fact lthy' (Facts.named (timing_name ^ ".domintros"))
 
-    (* Prove termination
-        TODO: use right termination schema *)
+    val prop = (timing_name ^ "_dom (" ^ (String.concatWith "," dom_args) ^ ")")
+                |> Syntax.read_prop lthy'
+    (* Prove a helper lemma *)
+    val dom_lemma = Goal.prove lthy' dom_args [] prop
+      (fn {context, ...} => HEADGOAL (time_dom_tac context induct domintros))
+    (* Add dom_lemma to simplification set *)
+    val simp_lthy = Simplifier.add_simp dom_lemma lthy'
+
+    (* Use lemma to prove termination *)
     val (time_info, lthy'') =
-      Function.prove_termination NONE (Lexicographic_Order.lexicographic_order_tac false lthy') lthy'
+      Function.prove_termination NONE (auto_tac simp_lthy) lthy'
     
     (* Context for printing without showing question marks *)
-    val print_ctxt = Config.put show_question_marks false lthy'
+    val print_ctxt = Config.put show_question_marks false lthy''
     (* Print result if print *)
     val _ = (if print then print_timing print_ctxt info time_info asymp else ())
   in
