@@ -4,8 +4,8 @@ sig
 
 val fun_pretty:  Proof.context -> Function.info -> Pretty.T
 val print_timing:  Proof.context -> Function.info -> Function.info -> bool -> unit
-val reg_time_func: local_theory -> term -> bool -> bool -> Function.info * local_theory
-val reg_time_func_cmd: string -> bool -> local_theory -> local_theory
+val reg_time_func: theory -> term -> bool -> bool -> Function.info * theory
+val reg_time_func_cmd: string -> bool -> theory -> theory
 
 val time_dom_tac: Proof.context -> thm -> thm list -> int -> tactic
 
@@ -207,8 +207,10 @@ fun time_dom_tac ctxt induct_rule domintros =
       THEN_ALL_NEW (Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros)
 
 (* Convert given function into a timing function *)
-fun reg_time_func (lthy: local_theory) (term: term) asymp print =
+fun reg_time_func (theory: theory) (term: term) asymp print =
   let
+    val lthy = Named_Target.theory_init theory
+
     val info = (Function.get_info lthy term) handle Empty => raise ERROR "Cannot find function in current theory"
     val terms = terms_of_info info;
 
@@ -218,7 +220,9 @@ fun reg_time_func (lthy: local_theory) (term: term) asymp print =
 
     (* 2. Find missing functions and define them *)
     val missing_funcs = find_missing lthy term (map right_of_equation terms)
-    val lthy = List.foldr (fn (f, ctxt) => reg_time_func ctxt f asymp print |> snd) lthy missing_funcs
+    val theory = Local_Theory.exit_global lthy
+    val theory = List.foldr (fn (f, ctxt) => reg_time_func ctxt f asymp print |> snd) theory missing_funcs
+    val lthy = Named_Target.theory_init theory
     
     (* 3. Convert every equation
       - Change type of toplevel equation from _ \<Rightarrow> _ \<Rightarrow> bool to nat \<Rightarrow> nat \<Rightarrow> bool
@@ -249,7 +253,7 @@ fun reg_time_func (lthy: local_theory) (term: term) asymp print =
     
     val {inducts, ...} = info
     val induct = (Option.valOf inducts |> hd)               
-    val lthy' = Named_Target.theory_init (Proof_Context.theory_of lthy)
+    val lthy' = Named_Target.theory_init (Local_Theory.exit_global lthy)
   
     val domintros = Proof_Context.get_fact lthy' (Facts.named (timing_name ^ ".domintros"))
 
@@ -270,22 +274,22 @@ fun reg_time_func (lthy: local_theory) (term: term) asymp print =
     (* Print result if print *)
     val _ = (if print then print_timing print_ctxt info time_info asymp else ())
   in
-    (time_info, lthy'')
+    (time_info, Local_Theory.exit_global lthy'')
   end;
 
 (* Convert function into its timing function (called by command) *)
-fun reg_time_func_cmd func asymp (lthy: local_theory) =
+fun reg_time_func_cmd func asymp (theory: theory) =
 let
-  val fterm = Syntax.read_term lthy func
-  val (_, lthy') = reg_time_func lthy fterm asymp true
-in lthy'
+  val fterm = Syntax.read_term (Proof_Context.init_global theory) func
+  val (_, theory') = reg_time_func theory fterm asymp true
+in theory'
 end;
 
-val _ = Outer_Syntax.local_theory @{command_keyword "define_time_fun"}
+val _ = Outer_Syntax.command @{command_keyword "define_time_fun"}
   "Defines runtime function of a function"
-  (Parse.prop >> (fn func => reg_time_func_cmd func false));
-val _ = Outer_Syntax.local_theory @{command_keyword "define_atime_fun"}
+  (Parse.prop >> (fn func => Toplevel.theory (reg_time_func_cmd func false)));
+val _ = Outer_Syntax.command @{command_keyword "define_atime_fun"}
   "Defines runtime function of a function"
-  (Parse.prop >> (fn func => reg_time_func_cmd func true));
+  (Parse.prop >> (fn func => Toplevel.theory (reg_time_func_cmd func true)));
 
 end
