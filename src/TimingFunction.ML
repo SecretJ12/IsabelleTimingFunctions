@@ -203,8 +203,10 @@ fun convert_term ctxt origin asymp (pT $ (Const (eqN, _) $ l $ r)) =
 
 (* Tactic to prove "f_dom n" *)
 fun time_dom_tac ctxt induct_rule domintros =
-  Induction.induction_tac ctxt true [] [[]] [] (SOME [induct_rule]) []
-      THEN_ALL_NEW (Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros)
+  (Induction.induction_tac ctxt true [] [[]] [] (SOME [induct_rule]) []
+      THEN_ALL_NEW (fn i => FIRST' (
+        (if i <= length domintros then [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt [List.nth (domintros, i-1)]] else []) @
+        [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros]) i))
 
 (* Convert given function into a timing function *)
 fun reg_time_func (theory: theory) (term: term) asymp print =
