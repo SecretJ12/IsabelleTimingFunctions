@@ -108,4 +108,14 @@ termination
   by (relation "measure (\<lambda>a. 4 - a)") auto
 define_atime_fun q
 
+function r :: \<open>nat \<Rightarrow> bool\<close> where
+\<open>r n = (if n \<le> 1 then True else if (Suc 1) dvd n then r (n div (Suc 1)) else r ((Suc (Suc 1)) * n + 1))\<close>
+  by auto
+termination sorry
+define_time_trivial "(div)"
+define_time_trivial "(dvd)"
+define_time_trivial "(*)"
+define_time_trivial "(\<le>)"
+define_atime_fun r
+
 end

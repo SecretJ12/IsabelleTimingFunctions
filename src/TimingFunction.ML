@@ -125,7 +125,7 @@ let
   val f_args = List.foldr (List.@) [] (map f args)
 in
   if nm = name_origin orelse Trivial_Funcs.is_trivial (Proof_Context.theory_of ctxt) (nm,T) then [] else
-  if not (same_theory name_origin nm) then raise ERROR ("Can only convert functions of this theory"^nm) else
+  if not (same_theory name_origin nm) then raise ERROR ("Can only convert functions of this theory: "^nm) else
   (Syntax.check_term ctxt (Const (fun_name_to_time nm, change_typ T)) |> (K f_args))
         handle (ERROR _) => func :: f_args
 end
@@ -204,9 +204,9 @@ fun convert_term ctxt origin asymp (pT $ (Const (eqN, _) $ l $ r)) =
 (* Tactic to prove "f_dom n" *)
 fun time_dom_tac ctxt induct_rule domintros =
   (Induction.induction_tac ctxt true [] [[]] [] (SOME [induct_rule]) []
-      THEN_ALL_NEW (fn i => FIRST' (
+      THEN_ALL_NEW ((fn _ => auto_tac ctxt) THEN' (fn i => FIRST' (
         (if i <= length domintros then [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt [List.nth (domintros, i-1)]] else []) @
-        [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros]) i))
+        [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros]) i)))
 
 (* Convert given function into a timing function *)
 fun reg_time_func (theory: theory) (term: term) asymp print =
