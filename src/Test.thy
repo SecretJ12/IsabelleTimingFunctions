@@ -38,21 +38,6 @@ function (domintros) t_g :: "nat \<Rightarrow> nat" where
 | "t_g (Suc n) = 1 + t_g n"
   by pat_completeness auto
 
-lemma t_g_dom: "t_g_dom n"
-  apply (induction rule: g.induct)
-  by (metis t_g.domintros)+
-lemma "t_g_dom 1 \<and> (\<forall>x. t_g_dom x)"
-  apply (simp add: t_g_dom)
-  done
-termination
-  apply (simp add: t_g_dom)
-  done
-
-ML \<open>
-Pretty.writeln (Syntax.pretty_term @{context} (Thm.prop_of @{thm "t_g_dom"}));
-@{print} Thm.prop_of @{thm "t_g_dom"}
-\<close>
-
 text \<open>The same function should be generated with the following command\<close>
 define_time_fun g
 
@@ -72,15 +57,6 @@ define_time_fun h
 fun itrev :: "'a list \<Rightarrow> 'a list \<Rightarrow> 'a list" where
   "itrev [] ys = ys"
 | "itrev (x#xs) ys = itrev xs (x#ys)"
-function (domintros) t_itrev :: "'a list \<Rightarrow> 'a list \<Rightarrow> nat" where
-  "t_itrev [] ys = 1"
-| "t_itrev (x#xs) ys = 1 + t_itrev xs (x#ys)"
-  by pat_completeness auto
-lemma t_itrev_dom: "t_itrev_dom (a,b)"
-  apply (induction rule: itrev.induct)
-   apply (metis t_itrev.domintros)+
-  done
-termination by (simp add: t_itrev_dom)
 define_time_fun itrev
 
 fun is_odd :: "nat \<Rightarrow> bool" where
@@ -117,5 +93,19 @@ lemma [simp]: "T_add n m = Suc n"
   by (induction n arbitrary: m) auto
 lemma "T_mul (Suc n) m = 1 + n * (Suc (Suc m))"
   by (induction n arbitrary: m) auto
+
+function p :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
+  "p a b = (if a < b then p (Suc a) b else a)"
+  by auto
+termination
+  by (relation "measure (\<lambda>(a,b). b - a)") auto
+define_atime_fun p
+
+function q :: "nat \<Rightarrow> nat" where
+  "q a = (if a < (Suc (Suc (Suc (Suc 0)))) then q (Suc a) else a)"
+  by auto
+termination
+  by (relation "measure (\<lambda>a. 4 - a)") auto
+define_atime_fun q
 
 end
