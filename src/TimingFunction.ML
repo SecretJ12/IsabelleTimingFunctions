@@ -12,7 +12,8 @@ val time_dom_tac: Proof.context -> thm -> thm list -> int -> tactic
 type 'a converter = {
   constc : local_theory -> term -> (term -> 'a) -> term -> 'a,
   funcc : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a,
-  ifc : local_theory -> term -> (term -> 'a) -> term -> term -> term -> 'a
+  ifc : local_theory -> term -> (term -> 'a) -> term -> term -> term -> 'a,
+  casec : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a
 };
 val walk : local_theory -> term -> 'a converter -> term -> 'a
 
@@ -61,6 +62,9 @@ end;
 (* returns true if it's an if term *)
 fun is_if (Const (n,_)) = (n = "HOL.If")
   | is_if _ = false
+(* returns true if it's an case term *)
+fun is_case (Const (n,_)) = String.isPrefix "case_" (List.last (String.fields (fn s => s = #".") n))
+  | is_case _ = false
 (* change type of original function to new type (_ \<Rightarrow> ... \<Rightarrow> _ to _ \<Rightarrow> ... \<Rightarrow> nat) *)
 fun change_typ (t as Type (n, [T1, T2])) = (if n = "fun" then Type (n, [T1, change_typ T2]) else t)
   | change_typ _ = natTyp
@@ -78,7 +82,8 @@ end
 type 'a converter = {
   constc : local_theory -> term -> (term -> 'a) -> term -> 'a,
   funcc : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a,
-  ifc : local_theory -> term -> (term -> 'a) -> term -> term -> term -> 'a
+  ifc : local_theory -> term -> (term -> 'a) -> term -> term -> term -> 'a,
+  casec : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a
 };
 
 (* Walks over term and calls given converter *)
@@ -86,7 +91,7 @@ fun walk_func (t1 $ t2) ts = walk_func t1 (t2::ts)
   | walk_func t ts = (t, ts)
 fun build_func (f, []) = f
   | build_func (f, (t::ts)) = build_func (f$t, ts)
-fun walk ctxt origin (conv as {ifc, funcc, ...}) (t as _ $ _) =
+fun walk ctxt origin (conv as {ifc, casec, funcc, ...}) (t as _ $ _) =
   let
     val (f, args) = walk_func t []
     val this = (walk ctxt origin conv)
@@ -94,10 +99,11 @@ fun walk ctxt origin (conv as {ifc, funcc, ...}) (t as _ $ _) =
     (if is_if f then
       (case args of [cond, t, f] => ifc ctxt origin this cond t f
                   | _ => raise ERROR "Invalid if term")
+      else if is_case f then casec ctxt origin this f args
       else funcc ctxt origin this f args)
   end
   | walk ctxt origin (conv as {constc, ...}) c = 
-    constc ctxt origin (walk ctxt origin conv) c
+      constc ctxt origin (walk ctxt origin conv) c
 
 (* 1. Fix all terms *)
 (* Exchange Var in types and terms to Free *)
@@ -136,7 +142,8 @@ fun find_missing ctxt term terms =
     (map (walk ctxt term {
         funcc = check_fun,
         constc = ((K o K o K o K) []),
-        ifc = (fn _ => fn _ => fn f => fn _ => fn t => fn r => f t @ f r)
+        ifc = (fn _ => fn _ => fn f => fn cond => fn t => fn r => f cond @ f t @ f r),
+        casec = (fn _ => fn _ => fn f => fn t => fn args => f t @ List.foldr (fn (t,fs) => f t @ fs) [] args)
     }) terms)
 
 (* 3. Convert equations *)
@@ -162,11 +169,27 @@ fun funcc ctxt origin f func args = List.foldr (I #-> plus)
   (case fun_to_time ctxt origin func of SOME t => build_func (t,args) | NONE => one) (map f args)
 fun ifc _ _ f cond tt ft =
   plus ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ cond $ (f tt) $ (f ft)) (f cond)
+fun casecArgs _ [t] = [t]
+  | casecArgs f ((Abs (v,T,t))::ar) = Abs (v,T,f t) :: casecArgs f ar
+  | casecArgs f (t::ar) = f t :: casecArgs f ar
+  | casecArgs _ _ = raise ERROR "Invalid case term"
+fun casecIsCase (Type (n1, [_,Type (n2, _)])) = (n1 = "fun" andalso n2 = "fun")
+  | casecIsCase _ = false
+fun casecLastTyp (Type (n, [T1,T2])) = Type (n, [T1, change_typ T2])
+  | casecLastTyp _ = raise ERROR "Invalid case type"
+fun casecTyp (Type (n, [T1, T2])) =
+      Type (n, [change_typ T1, (if casecIsCase T2 then casecTyp else casecLastTyp) T2])
+  | casecTyp _ = raise ERROR "Invalid case type"
+fun casec _ _ f (Const (t,T)) args =
+  if not (casecIsCase T) then raise ERROR "Invalid case type" else
+    plus (build_func (Const (t,casecTyp T), casecArgs f args)) (f (List.last args))
+  | casec _ _ _ _ _ = raise ERROR "Invalid case term"
 fun to_time ctxt origin term =
   plus one (walk ctxt origin {
         constc = fn _ => fn _ => fn _ => fn _ => one,
         funcc = funcc,
-        ifc = ifc
+        ifc = ifc,
+        casec = casec
     } term)
 (* Asymptotic conversion *)
 fun aplus (SOME a) (SOME b) = SOME (Const ("Groups.plus_class.plus", plusTyp) $ a $ b)
@@ -183,14 +206,35 @@ fun aifc _ _ f cond tt ft =
     val tt = f tt
     val ft = f ft
   in
-    (case (tt,ft) of (NONE, NONE) => NONE | _=>    
+    (case (tt,ft) of (NONE, NONE) => NONE | _ =>    
       aplus (SOME ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ cond $ (aopt_term tt) $ (aopt_term ft))) (f cond))
   end
+fun acasecArgs _ [t] = (false, [t])
+  | acasecArgs f ((Abs (v,T,t))::ar) =
+    (case f t of
+        NONE => acasecArgs f ar ||> (fn ar => Abs (v,T,zero) :: ar)
+      | SOME t => acasecArgs f ar ||> (fn ar => Abs (v,T,t) :: ar) |>> K true)
+  | acasecArgs f (t::ar) =
+    (case f t of
+        NONE => acasecArgs f ar ||> (fn ar => zero :: ar)
+      | SOME t => acasecArgs f ar ||> (fn ar => t :: ar) |>> K true)
+  | acasecArgs _ _ = raise ERROR "Invalid case term"
+fun acasec _ _ f (Const (t,T)) args =
+  if not (casecIsCase T) then raise ERROR "Invalid case type" else
+    let val (nconst, args') = acasecArgs f args in
+      aplus
+        (if nconst then
+          SOME (build_func (Const (t,casecTyp T), args'))
+         else NONE)
+        (f (List.last args))
+    end
+  | acasec _ _ _ _ _ = raise ERROR "Invalid case term"
 fun to_time_asymp ctxt origin term = 
   (opt_term o (aplus (SOME one))) (walk ctxt origin {
         constc = fn _ => fn _ => fn _ => fn _ => NONE,
         funcc = afuncc,
-        ifc = aifc
+        ifc = aifc,
+        casec = acasec
     } term)
 
 (* Converts a term to its running time version *)
@@ -204,7 +248,7 @@ fun convert_term ctxt origin asymp (pT $ (Const (eqN, _) $ l $ r)) =
 (* Tactic to prove "f_dom n" *)
 fun time_dom_tac ctxt induct_rule domintros =
   (Induction.induction_tac ctxt true [] [[]] [] (SOME [induct_rule]) []
-      THEN_ALL_NEW ((fn _ => auto_tac ctxt) THEN' (fn i => FIRST' (
+      THEN_ALL_NEW ((K (auto_tac ctxt)) THEN' (fn i => FIRST' (
         (if i <= length domintros then [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt [List.nth (domintros, i-1)]] else []) @
         [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros]) i)))
 

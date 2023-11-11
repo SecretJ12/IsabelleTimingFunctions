@@ -132,4 +132,37 @@ define_time_trivial "(*)"
 define_time_trivial "(\<le>)"
 define_atime_fun r
 
+text \<open>The command should handle case expressions\<close>
+fun default :: "'a option \<Rightarrow> 'a \<Rightarrow> 'a" where
+  "default opt d = (case opt of None \<Rightarrow> d | Some v \<Rightarrow> v)"
+fun t_default :: "'a option \<Rightarrow> 'a \<Rightarrow> nat" where
+  "t_default opt d = 1"
+define_atime_fun default
+lemma "T_default opt d = t_default opt d"
+  by auto
+
+fun default' :: "'a option \<Rightarrow> 'a \<Rightarrow> 'a" where
+  "default' opt d = (case opt of None \<Rightarrow> d | Some v \<Rightarrow> v)"
+fun t_default' :: "'a option \<Rightarrow> 'a \<Rightarrow> nat" where
+  "t_default' opt d = 1 + (case opt of None \<Rightarrow> 1 | Some v \<Rightarrow> 1) + 1"
+define_time_fun default'
+lemma "T_default' opt d = t_default' opt d"
+  by (auto split: option.split)
+
+fun caseAdd :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
+  "caseAdd a b = (case a of 0 \<Rightarrow> b | Suc a' \<Rightarrow> Suc (caseAdd a' b))"
+fun t_caseAdd :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
+  "t_caseAdd a b = 1 + (case a of 0 \<Rightarrow> 0 | Suc a' \<Rightarrow> t_caseAdd a' b)"
+define_atime_fun caseAdd
+lemma "T_caseAdd a b = t_caseAdd a b"
+  by (induction a) auto
+
+fun caseAdd' :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
+  "caseAdd' a b = (case a of 0 \<Rightarrow> b | Suc a' \<Rightarrow> Suc (caseAdd' a' b))"
+fun t_caseAdd' :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
+  "t_caseAdd' a b = 1 + ((case a of 0 \<Rightarrow> 1 | Suc a' \<Rightarrow> 1 + t_caseAdd' a' b + 1 + 1) + 1)"
+define_time_fun caseAdd'
+lemma "T_caseAdd' a b = t_caseAdd' a b"
+  by (induction a) auto
+
 end
