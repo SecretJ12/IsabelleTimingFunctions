@@ -10,10 +10,9 @@ fun f :: "nat \<Rightarrow> nat" where
 | "f (Suc n) = Suc n + f n"
 
 text \<open>It should be translated into the following timing function\<close>
-fun T_f :: "nat \<Rightarrow> nat" where
-  "T_f 0 = 1"
-| "T_f (Suc n) = T_f n + 1"
-
+fun t_f :: "nat \<Rightarrow> nat" where
+  "t_f 0 = 1"
+| "t_f (Suc n) = t_f n + 1"
 
 text \<open>Hereby we run through the following steps:
 \<E>\<lbrakk>f 0 = 0\<rbrakk>
@@ -30,56 +29,73 @@ and
 = (T_f (Suc n) = T_f n + 4)
 \<leadsto> (T_f (Suc n) = T_f n + 1)\<close>
 
-fun g :: "nat \<Rightarrow> nat" where
-  "g 0 = 1"
-| "g (Suc n) = g n"
-function (domintros) t_g :: "nat \<Rightarrow> nat" where
-  "t_g 0 = 1"
-| "t_g (Suc n) = 1 + t_g n"
-  by pat_completeness auto
-
 text \<open>The same function should be generated with the following command\<close>
-define_time_fun g
+define_atime_fun f
+lemma "t_f n = T_f n"
+  by (induction n) auto
 
-subsection \<open>Function T_g should now be defined\<close>
-value "T_g 1"
-
-subsection \<open>Example proof (Conversion still TODO)\<close>
+text \<open>Example proof (Conversion still TODO)\<close>
 lemma "T_f n = Suc n"
   by (induction n) simp+
 
-(* Simple working example *)
-fun h :: "'a list \<Rightarrow> nat" where
-  "h [] = 1"
-| "h (_#xs) = h xs"
-define_time_fun h
+text \<open>Also a non asymptotic version can be created\<close>
+fun g :: "nat \<Rightarrow> nat" where
+  "g 0 = 0"
+| "g (Suc n) = Suc n + g n"
+define_time_fun g
 
+lemma "T_g x = 2 + 5*x"
+  by (induction x) auto
+
+text \<open>The command should work for all input types\<close>
+fun len :: "'a list \<Rightarrow> nat" where
+  "len [] = 0"
+| "len (_#xs) = Suc (len xs)"
+define_atime_fun len
+
+lemma "T_len xs = Suc (length (xs))"
+  by (induction xs) auto
+
+text \<open>An also multiple inputs and different output types\<close>
 fun itrev :: "'a list \<Rightarrow> 'a list \<Rightarrow> 'a list" where
   "itrev [] ys = ys"
 | "itrev (x#xs) ys = itrev xs (x#ys)"
-define_time_fun itrev
+define_atime_fun itrev
 
+lemma "T_itrev xs ys = 1 + length xs"
+  by (induction xs arbitrary: ys) auto
+
+text \<open>Used functions of the same theory should be converted automatically\<close>
+fun itrev' :: "'a list \<Rightarrow> 'a list \<Rightarrow> 'a list" where
+  "itrev' [] ys = ys"
+| "itrev' (x#xs) ys = itrev' xs (x#ys)"
+fun Itrev' :: "'a list \<Rightarrow> 'a list" where
+  "Itrev' xs = itrev' xs []"
+define_atime_fun Itrev'
+value "T_Itrev' [a, b,c]"
+lemma T_itrev': "T_itrev' xs ys = 1 + length xs"
+  by (induction xs arbitrary: ys) auto
+lemma "T_Itrev' xs = 2 + length xs"
+  by (simp add: T_itrev')
+
+text \<open>If conditions should be handled accordingly\<close>
 fun is_odd :: "nat \<Rightarrow> bool" where
   "is_odd 0 = False"
 | "is_odd (Suc n) = (if is_odd n then \<not> (is_odd n) else \<not> (is_odd n))"
+fun t_is_odd :: "nat \<Rightarrow> nat" where
+  "t_is_odd 0 = 1"
+| "t_is_odd (Suc n) = 1 + (if is_odd n then t_is_odd n else t_is_odd n) + t_is_odd n"
 define_atime_fun is_odd
+lemma "T_is_odd n = t_is_odd n"
+  by (induction n) auto
 
-value "(T_is_odd 0, T_is_odd 1, T_is_odd 2, T_is_odd 3)"
+text \<open>Example proof\<close>
 lemma "T_is_odd n = 2^(Suc n) - 1"
-proof (induction n)
-  case (Suc n)
-  have "4 \<le> (2::nat)^(Suc (Suc n))"
-    apply (induction n)
-    by auto
-  have "T_is_odd (Suc n) = 1 + (2^(Suc (Suc n)) - 2)"
-    using Suc.IH
-    by simp
-  also have "\<dots> = 2^(Suc (Suc n)) - 1"
-    using \<open>4 \<le> 2 ^ Suc (Suc n)\<close> by linarith
-  
-  finally show ?case.
-qed simp
+  apply (induction n)
+  apply simp
+  by (metis (no_types, opaque_lifting) Suc_1 Suc_eq_plus1_left Suc_mask_eq_exp T_is_odd.simps(2) add_Suc_right add_diff_cancel_left' diff_Suc_Suc mult_2 mult_Suc_right power.simps(2))
 
+text \<open>More complex example for non asymptotic version\<close>
 fun add :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
   "add 0 y = y"
 | "add (Suc x) y = add x (Suc y)"
@@ -87,26 +103,24 @@ fun mul where
   "mul 0 y = 0"
 | "mul (Suc 0) y = y"
 | "mul (Suc (Suc x)) y = add y (mul (Suc x) y)"
-define_atime_fun mul
+define_time_fun mul
 
-lemma [simp]: "T_add n m = Suc n"
+text \<open>Example proof\<close>
+lemma T_add: "T_add n m = 2 + (4*n)"
   by (induction n arbitrary: m) auto
-lemma "T_mul (Suc n) m = 1 + n * (Suc (Suc m))"
-  by (induction n arbitrary: m) auto
+value "int (T_mul 1 0)"
+lemma "T_mul (Suc n) m = 2 + n*(4*m+7)"
+  by (induction n arbitrary: m) (auto simp: T_add)
 
+text \<open>The command should define the timing function and prove termination with help of the original function\<close>
 function p :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
   "p a b = (if a < b then p (Suc a) b else a)"
   by auto
 termination
   by (relation "measure (\<lambda>(a,b). b - a)") auto
 define_atime_fun p
-
-function q :: "nat \<Rightarrow> nat" where
-  "q a = (if a < (Suc (Suc (Suc (Suc 0)))) then q (Suc a) else a)"
-  by auto
-termination
-  by (relation "measure (\<lambda>a. 4 - a)") auto
-define_atime_fun q
+lemma "T_p 10 22 = 13"
+  by simp
 
 function r :: \<open>nat \<Rightarrow> bool\<close> where
 \<open>r n = (if n \<le> 1 then True else if (Suc 1) dvd n then r (n div (Suc 1)) else r ((Suc (Suc 1)) * n + 1))\<close>
