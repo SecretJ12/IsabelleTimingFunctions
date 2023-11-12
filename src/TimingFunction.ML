@@ -153,9 +153,10 @@ let
   val f_args = List.foldr (List.@) [] (map f args)
 in
   if nm = name_origin orelse Trivial_Funcs.is_trivial (Proof_Context.theory_of ctxt) (nm,T) then [] else
-  if not (same_theory name_origin nm) then raise ERROR ("Can only convert functions of this theory: "^nm) else
   (Syntax.check_term ctxt (Const (fun_name_to_time nm, change_typ T)) |> (K f_args))
-        handle (ERROR _) => func :: f_args
+        handle (ERROR _) =>
+  if not (same_theory name_origin nm) then raise ERROR ("Can only convert functions of this theory: "^nm)
+    else func :: f_args
 end
   | check_fun _ _ _ _ _ = raise ERROR "Invalid function"
 (* Returns list of all functions with undefined timing functions *)
