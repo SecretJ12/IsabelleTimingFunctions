@@ -336,7 +336,8 @@ fun reg_time_func (theory: theory) (term: term) asymp print =
 
     (* Use lemma to prove termination *)
     val (time_info, lthy'') =
-      Function.prove_termination NONE (auto_tac simp_lthy) lthy'
+      Function.prove_termination NONE
+        (auto_tac simp_lthy ORELSE Lexicographic_Order.lexicographic_order_tac false simp_lthy) lthy'
     
     (* Context for printing without showing question marks *)
     val print_ctxt = Config.put show_question_marks false lthy''
