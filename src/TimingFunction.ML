@@ -235,15 +235,12 @@ fun aifc _ _ f cond tt ft =
     (case (tt,ft) of (NONE, NONE) => NONE | _ =>    
       aplus (SOME ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ cond $ (aopt_term tt) $ (aopt_term ft))) (f cond))
   end
+fun acasecAbs f (Abs (v,Ta,t)) = (case acasecAbs f t of (nconst,t) => (nconst,Abs (v,Ta,t)))
+  | acasecAbs f t = (case f t of NONE => (false,zero) | SOME t => (true,t))
 fun acasecArgs _ [t] = (false, [t])
-  | acasecArgs f ((Abs (v,T,t))::ar) =
-    (case f t of
-        NONE => acasecArgs f ar ||> (fn ar => Abs (v,T,zero) :: ar)
-      | SOME t => acasecArgs f ar ||> (fn ar => Abs (v,T,t) :: ar) |>> K true)
   | acasecArgs f (t::ar) =
-    (case f t of
-        NONE => acasecArgs f ar ||> (fn ar => zero :: ar)
-      | SOME t => acasecArgs f ar ||> (fn ar => t :: ar) |>> K true)
+    (case acasecAbs f t of (nconst, tt) => 
+      acasecArgs f ar ||> (fn ar => tt :: ar) |>> (if nconst then K true else I))
   | acasecArgs _ _ = raise ERROR "Invalid case term"
 fun acasec _ _ f (Const (t,T)) args =
   if not (casecIsCase T) then raise ERROR "Invalid case type" else
