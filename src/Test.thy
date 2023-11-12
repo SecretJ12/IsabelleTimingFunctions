@@ -72,7 +72,7 @@ fun itrev' :: "'a list \<Rightarrow> 'a list \<Rightarrow> 'a list" where
 fun Itrev' :: "'a list \<Rightarrow> 'a list" where
   "Itrev' xs = itrev' xs []"
 define_atime_fun Itrev'
-value "T_Itrev' [a, b,c]"
+value "T_Itrev' [a, b, c]"
 lemma T_itrev': "T_itrev' xs ys = 1 + length xs"
   by (induction xs arbitrary: ys) auto
 lemma "T_Itrev' xs = 2 + length xs"
@@ -164,5 +164,10 @@ fun t_caseAdd' :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
 define_time_fun caseAdd'
 lemma "T_caseAdd' a b = t_caseAdd' a b"
   by (induction a) auto
+
+text \<open>Edge case of reduced cases\<close>
+fun test :: "nat * nat \<Rightarrow> nat" where
+  "test n = (case n of (a, b) \<Rightarrow> a + b)"
+define_time_fun test
 
 end

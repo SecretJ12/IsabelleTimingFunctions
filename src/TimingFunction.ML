@@ -111,6 +111,28 @@ fun fixTerms (Var(ixn,T)) = Free (fst ixn, T)
   | fixTerms t = t
 fun fixTypes (TVar ((t, _), T)) = TFree (t, T)
   | fixTypes t = t
+val _ = Variable.variant_fixes
+fun casecBuildBounds n t = if n > 0 then casecBuildBounds (n-1) (t $ (Bound (n-1))) else t
+fun casecAbs ctxt f n (Type (_,[_,Tr])) (Abs (v,Ta,t)) = Abs (v,Ta,casecAbs ctxt f n Tr t)
+  | casecAbs ctxt f n (Type (Tn,[T,Tr])) t =
+    (case Variable.variant_fixes ["x"] ctxt of ([v],ctxt) =>
+    (if Tn = "fun" then Abs(v,T,casecAbs ctxt f (n + 1) Tr t) else f t)
+    | _ => raise ERROR "Could not fix variables")
+  | casecAbs _ f n _ t = f (casecBuildBounds n t)
+fun fixCasecCases _ _ _ [t] = [t]
+  | fixCasecCases ctxt f (Type (_,[T,Tr])) (t::ts) = casecAbs ctxt f 0 T t :: fixCasecCases ctxt f Tr ts
+  | fixCasecCases _ _ _ _ = raise ERROR "Invalid case types/terms"
+fun fixCasec ctxt _ f (t as Const (_,T)) args = build_func (t,fixCasecCases ctxt f T args)
+  | fixCasec _ _ _ _ _ = raise ERROR "Invalid case term"
+fun fixPartTerms ctxt term (pT $ (eq $ l $ r)) =
+  pT $ (eq $ l $ (walk ctxt term {
+        funcc = (fn _ => fn _ => fn f => fn t => fn args => build_func (t, map f args)),
+        constc = (fn _ => fn _ => fn _ => fn c => c),
+        ifc = (fn _ => fn _ => fn f => fn cond => fn tt => fn tf =>
+          ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ f cond $ (f tt) $ (f tf))),
+        casec = fixCasec
+    } r))
+  | fixPartTerms _ _ _ = raise ERROR "Invalid term to fix"
 
 (* 2. Check for undefined timing functions *)
 fun right_of_equation (_ $ (_ $ _ $ r)) = r
@@ -137,13 +159,15 @@ in
 end
   | check_fun _ _ _ _ _ = raise ERROR "Invalid function"
 (* Returns list of all functions with undefined timing functions *)
-fun find_missing ctxt term terms = 
+fun casecMisAbs f (Abs (_,_,t)) = casecMisAbs f t
+  | casecMisAbs f t = f t
+fun find_missing ctxt term terms =
   List.foldr (List.@) []
     (map (walk ctxt term {
         funcc = check_fun,
         constc = ((K o K o K o K) []),
         ifc = (fn _ => fn _ => fn f => fn cond => fn t => fn r => f cond @ f t @ f r),
-        casec = (fn _ => fn _ => fn f => fn t => fn args => f t @ List.foldr (fn (t,fs) => f t @ fs) [] args)
+        casec = (fn _ => fn _ => fn f => fn t => fn args => f t @ List.foldr (fn (t,fs) => casecMisAbs f t @ fs) [] args)
     }) terms)
 
 (* 3. Convert equations *)
@@ -169,9 +193,10 @@ fun funcc ctxt origin f func args = List.foldr (I #-> plus)
   (case fun_to_time ctxt origin func of SOME t => build_func (t,args) | NONE => one) (map f args)
 fun ifc _ _ f cond tt ft =
   plus ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ cond $ (f tt) $ (f ft)) (f cond)
+fun casecAbs f (Abs (v,Ta,t)) = Abs (v,Ta,casecAbs f t)
+  | casecAbs f t = f t
 fun casecArgs _ [t] = [t]
-  | casecArgs f ((Abs (v,T,t))::ar) = Abs (v,T,f t) :: casecArgs f ar
-  | casecArgs f (t::ar) = f t :: casecArgs f ar
+  | casecArgs f (t::ar) = casecAbs f t :: casecArgs f ar
   | casecArgs _ _ = raise ERROR "Invalid case term"
 fun casecIsCase (Type (n1, [_,Type (n2, _)])) = (n1 = "fun" andalso n2 = "fun")
   | casecIsCase _ = false
@@ -262,7 +287,7 @@ fun reg_time_func (theory: theory) (term: term) asymp print =
 
     (* 1. Fix all terms *)
     (* Exchange Var in types and terms to Free *)
-    val terms = map (map_aterms fixTerms #> map_types (map_atyps fixTypes)) terms
+    val terms = map (map_aterms fixTerms #> map_types (map_atyps fixTypes) #> fixPartTerms lthy term) terms
 
     (* 2. Find missing functions and define them *)
     val missing_funcs = find_missing lthy term (map right_of_equation terms)
