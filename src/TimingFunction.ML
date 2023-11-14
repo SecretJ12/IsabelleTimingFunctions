@@ -30,7 +30,7 @@ fun terms_of_info (info: Function.info) =
 let
   val {simps, ...} = info
 in
-  map Thm.prop_of (case simps of SOME s => s | NONE => raise ERROR "Function has no terms")
+  map Thm.prop_of (case simps of SOME s => s | NONE => error "Function has no terms")
 end;
 
 (* Auxiliary functions for printing functions *)
@@ -38,7 +38,7 @@ fun fun_pretty ctxt (info: Function.info) =
 let
   val {defname, fs, ...} = info;
   val name = Binding.name_of defname;
-  val typ = (case fs of (Const (_, typ)::_) => typ | (Free (_, typ)::_) => typ | _ => raise ERROR "Type of function not implemented")
+  val typ = (case fs of (Const (_, typ)::_) => typ | (Free (_, typ)::_) => typ | _ => error "Type of function not implemented")
   val trms = terms_of_info info;
   val header_beg = Pretty.str ("fun " ^ name ^ " :: ");
   val header_end = Pretty.str (" where\n  ");
@@ -73,7 +73,7 @@ fun fun_name_to_time name =
 let
   fun replace_last_name [n] = ["T_" ^ n]
     | replace_last_name (n::ns) = n :: (replace_last_name ns)
-    | replace_last_name _ = raise ERROR "Invalid function with empty name"
+    | replace_last_name _ = error "Invalid function with empty name"
   val parts = String.fields (fn s => s = #".") name
 in
   String.concatWith "." (replace_last_name parts)
@@ -98,7 +98,7 @@ fun walk ctxt origin (conv as {ifc, casec, funcc, ...}) (t as _ $ _) =
   in
     (if is_if f then
       (case args of [cond, t, f] => ifc ctxt origin this cond t f
-                  | _ => raise ERROR "Invalid if term")
+                  | _ => error "Invalid if term")
       else if is_case f then casec ctxt origin this f args
       else funcc ctxt origin this f args)
   end
@@ -117,13 +117,13 @@ fun casecAbs ctxt f n (Type (_,[_,Tr])) (Abs (v,Ta,t)) = Abs (v,Ta,casecAbs ctxt
   | casecAbs ctxt f n (Type (Tn,[T,Tr])) t =
     (case Variable.variant_fixes ["x"] ctxt of ([v],ctxt) =>
     (if Tn = "fun" then Abs(v,T,casecAbs ctxt f (n + 1) Tr t) else f t)
-    | _ => raise ERROR "Could not fix variables")
+    | _ => error "Could not fix variables")
   | casecAbs _ f n _ t = f (casecBuildBounds n t)
 fun fixCasecCases _ _ _ [t] = [t]
   | fixCasecCases ctxt f (Type (_,[T,Tr])) (t::ts) = casecAbs ctxt f 0 T t :: fixCasecCases ctxt f Tr ts
-  | fixCasecCases _ _ _ _ = raise ERROR "Invalid case types/terms"
+  | fixCasecCases _ _ _ _ = error "Invalid case types/terms"
 fun fixCasec ctxt _ f (t as Const (_,T)) args = build_func (t,fixCasecCases ctxt f T args)
-  | fixCasec _ _ _ _ _ = raise ERROR "Invalid case term"
+  | fixCasec _ _ _ _ _ = error "Invalid case term"
 fun fixPartTerms ctxt term (pT $ (eq $ l $ r)) =
   pT $ (eq $ l $ (walk ctxt term {
         funcc = (fn _ => fn _ => fn f => fn t => fn args => build_func (t, map f args)),
@@ -132,11 +132,11 @@ fun fixPartTerms ctxt term (pT $ (eq $ l $ r)) =
           ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ f cond $ (f tt) $ (f tf))),
         casec = fixCasec
     } r))
-  | fixPartTerms _ _ _ = raise ERROR "Invalid term to fix"
+  | fixPartTerms _ _ _ = error "Invalid term to fix"
 
 (* 2. Check for undefined timing functions *)
 fun right_of_equation (_ $ (_ $ _ $ r)) = r
-  | right_of_equation _ = raise ERROR "Invalid equation"
+  | right_of_equation _ = error "Invalid equation"
 (* Check if it's the same theory *)
 fun same_theory t1 t2 =
 let
@@ -155,10 +155,10 @@ in
   if nm = name_origin orelse Trivial_Funcs.is_trivial (Proof_Context.theory_of ctxt) (nm,T) then [] else
   (Syntax.check_term ctxt (Const (fun_name_to_time nm, change_typ T)) |> (K f_args))
         handle (ERROR _) =>
-  if not (same_theory name_origin nm) then raise ERROR ("Can only convert functions of this theory: "^nm)
+  if not (same_theory name_origin nm) then error ("Can only convert functions of this theory: "^nm)
     else func :: f_args
 end
-  | check_fun _ _ _ _ _ = raise ERROR "Invalid function"
+  | check_fun _ _ _ _ _ = error "Invalid function"
 (* Returns list of all functions with undefined timing functions *)
 fun casecMisAbs f (Abs (_,_,t)) = casecMisAbs f t
   | casecMisAbs f t = f t
@@ -183,7 +183,7 @@ in
   if Trivial_Funcs.is_trivial (Proof_Context.theory_of ctxt) (nm,T) then NONE else
   SOME (Const (timing_name_other, change_typ T))
 end
-  | fun_to_time _ _ _ = raise ERROR "Invalid function to convert"
+  | fun_to_time _ _ _ = error "Invalid function to convert"
 
 (* Normal conversion *)
 val plusTyp = @{typ "nat => nat => nat"}
@@ -198,18 +198,18 @@ fun casecAbs f (Abs (v,Ta,t)) = Abs (v,Ta,casecAbs f t)
   | casecAbs f t = f t
 fun casecArgs _ [t] = [t]
   | casecArgs f (t::ar) = casecAbs f t :: casecArgs f ar
-  | casecArgs _ _ = raise ERROR "Invalid case term"
+  | casecArgs _ _ = error "Invalid case term"
 fun casecIsCase (Type (n1, [_,Type (n2, _)])) = (n1 = "fun" andalso n2 = "fun")
   | casecIsCase _ = false
 fun casecLastTyp (Type (n, [T1,T2])) = Type (n, [T1, change_typ T2])
-  | casecLastTyp _ = raise ERROR "Invalid case type"
+  | casecLastTyp _ = error "Invalid case type"
 fun casecTyp (Type (n, [T1, T2])) =
       Type (n, [change_typ T1, (if casecIsCase T2 then casecTyp else casecLastTyp) T2])
-  | casecTyp _ = raise ERROR "Invalid case type"
+  | casecTyp _ = error "Invalid case type"
 fun casec _ _ f (Const (t,T)) args =
-  if not (casecIsCase T) then raise ERROR "Invalid case type" else
+  if not (casecIsCase T) then error "Invalid case type" else
     plus (build_func (Const (t,casecTyp T), casecArgs f args)) (f (List.last args))
-  | casec _ _ _ _ _ = raise ERROR "Invalid case term"
+  | casec _ _ _ _ _ = error "Invalid case term"
 fun to_time ctxt origin term =
   plus one (walk ctxt origin {
         constc = fn _ => fn _ => fn _ => fn _ => one,
@@ -241,9 +241,9 @@ fun acasecArgs _ [t] = (false, [t])
   | acasecArgs f (t::ar) =
     (case acasecAbs f t of (nconst, tt) => 
       acasecArgs f ar ||> (fn ar => tt :: ar) |>> (if nconst then K true else I))
-  | acasecArgs _ _ = raise ERROR "Invalid case term"
+  | acasecArgs _ _ = error "Invalid case term"
 fun acasec _ _ f (Const (t,T)) args =
-  if not (casecIsCase T) then raise ERROR "Invalid case type" else
+  if not (casecIsCase T) then error "Invalid case type" else
     let val (nconst, args') = acasecArgs f args in
       aplus
         (if nconst then
@@ -251,7 +251,7 @@ fun acasec _ _ f (Const (t,T)) args =
          else NONE)
         (f (List.last args))
     end
-  | acasec _ _ _ _ _ = raise ERROR "Invalid case term"
+  | acasec _ _ _ _ _ = error "Invalid case term"
 fun to_time_asymp ctxt origin term = 
   (opt_term o (aplus (SOME one))) (walk ctxt origin {
         constc = fn _ => fn _ => fn _ => fn _ => NONE,
@@ -266,7 +266,7 @@ fun convert_term ctxt origin asymp (pT $ (Const (eqN, _) $ l $ r)) =
       $ (Const (eqN, @{typ "nat \<Rightarrow> nat \<Rightarrow> bool"})
         $ (build_func ((walk_func l []) |>> (fun_to_time ctxt origin) |>> Option.valOf))
         $ (((if asymp then to_time_asymp else to_time) ctxt origin) r))
-  | convert_term _ _ _ _ = raise ERROR "Invalid term to convert"
+  | convert_term _ _ _ _ = error "Invalid term to convert"
 
 (* Tactic to prove "f_dom n" *)
 fun time_dom_tac ctxt induct_rule domintros =
@@ -280,7 +280,7 @@ fun reg_time_func (theory: theory) (term: term) asymp print =
   let
     val lthy = Named_Target.theory_init theory
 
-    val info = (Function.get_info lthy term) handle Empty => raise ERROR "Cannot find function in current theory"
+    val info = (Function.get_info lthy term) handle Empty => error "Cannot find function in current theory"
     val terms = terms_of_info info;
 
     (* 1. Fix all terms *)
@@ -318,26 +318,33 @@ fun reg_time_func (theory: theory) (term: term) asymp print =
     (* Start proving the termination *)
     fun args (a$_) = args a |> (fn (x,ar) => (x^"x",x::ar))
       | args _ = ("x",[])
-    val dom_args = (case terms of ((_ $ (_ $ l $ _))::_) => args l |> snd | _ => raise ERROR "Invalid function")
+    val dom_args = (case terms of ((_ $ (_ $ l $ _))::_) => args l |> snd | _ => error "Invalid function")
     
     val {inducts, ...} = info
     val induct = (Option.valOf inducts |> hd)               
     val lthy' = Named_Target.theory_init (Local_Theory.exit_global lthy)
   
-    val domintros = Proof_Context.get_fact lthy' (Facts.named (timing_name ^ ".domintros"))
-
-    val prop = (timing_name ^ "_dom (" ^ (String.concatWith "," dom_args) ^ ")")
-                |> Syntax.read_prop lthy'
-    (* Prove a helper lemma *)
-    val dom_lemma = Goal.prove lthy' dom_args [] prop
-      (fn {context, ...} => HEADGOAL (time_dom_tac context induct domintros))
-    (* Add dom_lemma to simplification set *)
-    val simp_lthy = Simplifier.add_simp dom_lemma lthy'
-
-    (* Use lemma to prove termination *)
+    (* Proof by lexicographic_order_tac *)
     val (time_info, lthy'') =
-      Function.prove_termination NONE
-        (auto_tac simp_lthy ORELSE Lexicographic_Order.lexicographic_order_tac false simp_lthy) lthy'
+      (Function.prove_termination NONE
+        (Lexicographic_Order.lexicographic_order_tac false lthy') lthy')
+        handle (ERROR _) => 
+        let
+          val _ = warning "Falling back to proof over dom..."
+          val domintros = Proof_Context.get_fact lthy' (Facts.named (timing_name ^ ".domintros"))
+          val prop = (timing_name ^ "_dom (" ^ (String.concatWith "," dom_args) ^ ")")
+                      |> Syntax.read_prop lthy'
+          (* Prove a helper lemma *)
+          val dom_lemma = Goal.prove lthy' dom_args [] prop
+            (fn {context, ...} => HEADGOAL (time_dom_tac context induct domintros))
+          (* Add dom_lemma to simplification set *)
+          val simp_lthy = Simplifier.add_simp dom_lemma lthy'
+      
+          (* Use lemma to prove termination *)
+        in
+          Function.prove_termination NONE
+            (auto_tac simp_lthy) lthy'
+        end
     
     (* Context for printing without showing question marks *)
     val print_ctxt = Config.put show_question_marks false lthy''
