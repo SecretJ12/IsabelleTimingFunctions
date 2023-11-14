@@ -126,10 +126,10 @@ function r :: \<open>nat \<Rightarrow> bool\<close> where
 \<open>r n = (if n \<le> 1 then True else if (Suc 1) dvd n then r (n div (Suc 1)) else r ((Suc (Suc 1)) * n + 1))\<close>
   by auto
 termination sorry
-define_time_trivial "(div)"
-define_time_trivial "(dvd)"
-define_time_trivial "(*)"
-define_time_trivial "(\<le>)"
+define_time_unit "(div)"
+define_time_unit "(dvd)"
+define_time_unit "(*)"
+define_time_unit "(\<le>)"
 define_atime_fun r
 
 text \<open>The command should handle case expressions\<close>
@@ -167,7 +167,19 @@ lemma "T_caseAdd' a b = t_caseAdd' a b"
 
 text \<open>Edge case of reduced cases\<close>
 fun test :: "nat * nat \<Rightarrow> nat" where
-  "test n = (case n of (a, b) \<Rightarrow> a + b)"
+  "test n = (case n of (a, b) \<Rightarrow> add a b)"
 define_time_fun test
+
+fun sub :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
+  "sub a 0 = a"
+| "sub 0 b = 0"
+| "sub (Suc a) (Suc b) = sub a b"
+define_atime_fun sub
+
+fun addsub :: "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat" where
+  "addsub as a b = (if as then add a b else sub a b)"
+fun t_addsub :: "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat" where
+  "t_addsub as a b = 1 + (if as then T_add a b + 1 + 1 else T_sub a b + 1 + 1) + 1"
+define_time_fun addsub
 
 end

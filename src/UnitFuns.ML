@@ -36,7 +36,7 @@ in add_trivial name thy
 end
 
 val _ =
-  Outer_Syntax.command \<^command_keyword>\<open>define_time_trivial\<close> "ML setup for global theory"
+  Outer_Syntax.command \<^command_keyword>\<open>define_time_unit\<close> "ML setup for global theory"
     (Parse.prop >> (Toplevel.theory o save));
 
 end
