@@ -170,4 +170,11 @@ fun edge_case :: "nat * nat \<Rightarrow> nat" where
   "edge_case n = (case n of (a, b) \<Rightarrow> add a b)"
 define_time_fun edge_case
 
+text \<open>Allow conversion of library functions\<close>
+define_atime_fun rev
+lemma T_append_length: "T_append xs ys = Suc (length xs)"
+  by (induction xs) auto
+lemma "T_rev xs = \<Sum>{1..Suc (length xs)}"
+  by (induction xs) (auto simp: T_append_length)
+
 end
