@@ -196,7 +196,8 @@ let
 in
   if nm = full_name_origin then SOME (Free (timing_name_origin, change_typ T)) else
   if Trivial_Funcs.is_trivial (Proof_Context.theory_of ctxt) (nm,T) then NONE else
-  SOME (Const (timing_name_other, change_typ T))
+  SOME (Syntax.check_term ctxt (Const (timing_name_other,change_typ T))
+    handle (ERROR _) => Syntax.read_term ctxt (Long_Name.base_name timing_name_other))
 end
   | fun_to_time _ _ _ = error "Invalid function to convert"
 
@@ -322,7 +323,7 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
 
     (* 4. Register function and prove termination *)
     val name = Term.term_name term
-    val timing_name = "T_" ^ name
+    val timing_name = fun_name_to_time name
     val {is_partial, ...} = info
     val bindings = [(Binding.name timing_name, NONE, NoSyn)]
     val fun_config = Function_Common.FunctionConfig
