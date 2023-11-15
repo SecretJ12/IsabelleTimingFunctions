@@ -167,11 +167,11 @@ let
   val name_origin = origin |> dest_Const |> fst
   val f_args = List.foldr (List.@) [] (map f args)
 in
-  if nm = name_origin orelse Trivial_Funcs.is_trivial (Proof_Context.theory_of ctxt) (nm,T) then [] else
+  if nm = name_origin orelse Trivial_Funcs.is_trivial (Proof_Context.theory_of ctxt) (nm,T) then f_args else
   (Syntax.check_term ctxt (Const (fun_name_to_time nm, change_typ T)) |> (K f_args))
         handle (ERROR _) =>
-  if not (same_theory name_origin nm) then error ("Can only convert functions of this theory: "^nm)
-    else func :: f_args
+  if same_theory name_origin nm then func :: f_args
+    else error ("Can only convert functions of this theory: "^nm)
 end
   | check_fun _ _ _ _ _ = error "Invalid function"
 (* Returns list of all functions with undefined timing functions *)
