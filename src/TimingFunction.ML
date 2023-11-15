@@ -97,8 +97,8 @@ fun count_args (Type (n, [_,res])) = (if n = "fun" then 1 + count_args res else 
   | count_args _ = 0
 (* Check if number of arguments matches function *)
 fun check_args s (Const (_,T), args) =
-    (if length args = count_args T then () else error ("Partial applications not allowed (" ^ s ^ ")"))
-  | check_args s _ = error ("Invalid function term (" ^ s ^ ")")
+    (if length args = count_args T then () else error ("Partial applications/Lambdas not allowed (" ^ s ^ ")"))
+  | check_args s _ = error ("Partial applications/Lambdas not allowed (" ^ s ^ ")")
 
 fun time_term ctxt (Const (nm,T)) =
 let
