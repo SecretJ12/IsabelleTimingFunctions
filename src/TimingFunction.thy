@@ -11,5 +11,6 @@ ML_file TimingFunction.ML
 define_time_unit "(+)"
 define_time_unit "(<)"
 define_time_unit "Not"
+define_time_unit "Num.numeral_class.numeral"
 
 end

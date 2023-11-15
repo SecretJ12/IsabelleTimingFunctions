@@ -1,14 +1,6 @@
 
 signature TIMING_FUNCTIONS =
 sig
-
-val fun_pretty:  Proof.context -> Function.info -> Pretty.T
-val print_timing:  Proof.context -> Function.info -> Function.info -> bool -> unit
-val reg_time_func: theory -> term -> bool -> bool -> Function.info * theory
-val reg_time_func_cmd: string -> bool -> theory -> theory
-
-val time_dom_tac: Proof.context -> thm -> thm list -> int -> tactic
-
 type 'a converter = {
   constc : local_theory -> term -> (term -> 'a) -> term -> 'a,
   funcc : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a,
@@ -16,6 +8,13 @@ type 'a converter = {
   casec : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a
 };
 val walk : local_theory -> term -> 'a converter -> term -> 'a
+
+val fun_pretty:  Proof.context -> Function.info -> Pretty.T
+val print_timing:  Proof.context -> Function.info -> Function.info -> unit
+val reg_time_func: theory -> term -> 'a converter -> (local_theory -> term -> 'a -> term) -> bool -> Function.info * theory
+val reg_time_func_cmd: string -> 'a converter -> (local_theory -> term -> 'a -> term) -> theory -> theory
+
+val time_dom_tac: Proof.context -> thm -> thm list -> int -> tactic
 
 end
 
@@ -49,12 +48,12 @@ let
 in
   Pretty.text_fold (header @ ptrms)
 end;
-fun print_timing ctxt (oinfo: Function.info) (tinfo: Function.info) asymp =
+fun print_timing ctxt (oinfo: Function.info) (tinfo: Function.info) =
 let
   val {defname, ...} = oinfo;
   val name = Binding.name_of defname;
   val poriginal = Pretty.item [Pretty.str "Original function:\n", fun_pretty ctxt oinfo]
-  val ptiming = Pretty.item [Pretty.str ((if asymp then "Asymptotic r" else "R") ^ "unning time function:\n"), fun_pretty ctxt tinfo]
+  val ptiming = Pretty.item [Pretty.str ("Running time function:\n"), fun_pretty ctxt tinfo]
 in
   Pretty.writeln (Pretty.text_fold [Pretty.str ("Converting " ^ name ^ "...\n"), poriginal, Pretty.str "\n", ptiming])
 end;
@@ -78,6 +77,13 @@ let
 in
   String.concatWith "." (replace_last_name parts)
 end
+(* Count number of arguments of a function *)
+fun count_args (Type (n, [_,res])) = (if n = "fun" then 1 + count_args res else 0)
+  | count_args _ = 0
+(* Check if number of arguments matches function *)
+fun check_args s (Const (_,T), args) =
+    (if length args = count_args T then () else error ("Partial applications not allowed (" ^ s ^ ")"))
+  | check_args s _ = error ("Invalid function term (" ^ s ^ ")")
 
 type 'a converter = {
   constc : local_theory -> term -> (term -> 'a) -> term -> 'a,
@@ -85,6 +91,8 @@ type 'a converter = {
   ifc : local_theory -> term -> (term -> 'a) -> term -> term -> term -> 'a,
   casec : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a
 };
+
+(* Count number of arguments needed for a function *)
 
 (* Walks over term and calls given converter *)
 fun walk_func (t1 $ t2) ts = walk_func t1 (t2::ts)
@@ -95,10 +103,11 @@ fun walk ctxt origin (conv as {ifc, casec, funcc, ...}) (t as _ $ _) =
   let
     val (f, args) = walk_func t []
     val this = (walk ctxt origin conv)
+    val _ = (case f of Abs _ => error "Lambdas are not allowed" | _ => ())
   in
     (if is_if f then
       (case args of [cond, t, f] => ifc ctxt origin this cond t f
-                  | _ => error "Invalid if term")
+                  | _ => error "Partial applications not allowed (if)")
       else if is_case f then casec ctxt origin this f args
       else funcc ctxt origin this f args)
   end
@@ -122,16 +131,22 @@ fun casecAbs ctxt f n (Type (_,[_,Tr])) (Abs (v,Ta,t)) = Abs (v,Ta,casecAbs ctxt
 fun fixCasecCases _ _ _ [t] = [t]
   | fixCasecCases ctxt f (Type (_,[T,Tr])) (t::ts) = casecAbs ctxt f 0 T t :: fixCasecCases ctxt f Tr ts
   | fixCasecCases _ _ _ _ = error "Invalid case types/terms"
-fun fixCasec ctxt _ f (t as Const (_,T)) args = build_func (t,fixCasecCases ctxt f T args)
+fun fixCasec ctxt _ f (t as Const (n,T)) args =
+      (check_args "cases" (Syntax.read_term ctxt n,args); build_func (t,fixCasecCases ctxt f T args))
   | fixCasec _ _ _ _ _ = error "Invalid case term"
 fun fixPartTerms ctxt term (pT $ (eq $ l $ r)) =
-  pT $ (eq $ l $ (walk ctxt term {
-        funcc = (fn _ => fn _ => fn f => fn t => fn args => build_func (t, map f args)),
-        constc = (fn _ => fn _ => fn _ => fn c => c),
-        ifc = (fn _ => fn _ => fn f => fn cond => fn tt => fn tf =>
-          ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ f cond $ (f tt) $ (f tf))),
-        casec = fixCasec
-    } r))
+  let
+    val _ = check_args "args" (walk_func l [])
+  in
+    pT $ (eq $ l $ (walk ctxt term {
+          funcc = (fn _ => fn _ => fn f => fn t => fn args =>
+              (check_args "func" (t,args); build_func (t, map f args))),
+          constc = (fn _ => fn _ => fn _ => fn c => c),
+          ifc = (fn _ => fn _ => fn f => fn cond => fn tt => fn tf =>
+            ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ f cond $ (f tt) $ (f tf))),
+          casec = fixCasec
+      } r))
+  end
   | fixPartTerms _ _ _ = error "Invalid term to fix"
 
 (* 2. Check for undefined timing functions *)
@@ -210,13 +225,14 @@ fun casec _ _ f (Const (t,T)) args =
   if not (casecIsCase T) then error "Invalid case type" else
     plus (build_func (Const (t,casecTyp T), casecArgs f args)) (f (List.last args))
   | casec _ _ _ _ _ = error "Invalid case term"
-fun to_time ctxt origin term =
-  plus one (walk ctxt origin {
+val converter : term converter = {
         constc = fn _ => fn _ => fn _ => fn _ => one,
         funcc = funcc,
         ifc = ifc,
         casec = casec
-    } term)
+    }
+fun top_converter _ _ = plus one
+
 (* Asymptotic conversion *)
 fun aplus (SOME a) (SOME b) = SOME (Const ("Groups.plus_class.plus", plusTyp) $ a $ b)
   | aplus (SOME a) NONE = SOME a
@@ -252,21 +268,25 @@ fun acasec _ _ f (Const (t,T)) args =
         (f (List.last args))
     end
   | acasec _ _ _ _ _ = error "Invalid case term"
-fun to_time_asymp ctxt origin term = 
-  (opt_term o (aplus (SOME one))) (walk ctxt origin {
+val aconverter : term option converter = {
         constc = fn _ => fn _ => fn _ => fn _ => NONE,
         funcc = afuncc,
         ifc = aifc,
         casec = acasec
-    } term)
+    }
+fun atop_converter _ _ = opt_term o (aplus (SOME one))
+
+(* Use converter to convert right side of a term *)
+fun to_time ctxt origin converter top_converter term = 
+  top_converter ctxt origin (walk ctxt origin converter term)
 
 (* Converts a term to its running time version *)
-fun convert_term ctxt origin asymp (pT $ (Const (eqN, _) $ l $ r)) =
+fun convert_term ctxt origin conv topConv (pT $ (Const (eqN, _) $ l $ r)) =
       pT
       $ (Const (eqN, @{typ "nat \<Rightarrow> nat \<Rightarrow> bool"})
         $ (build_func ((walk_func l []) |>> (fun_to_time ctxt origin) |>> Option.valOf))
-        $ (((if asymp then to_time_asymp else to_time) ctxt origin) r))
-  | convert_term _ _ _ _ = error "Invalid term to convert"
+        $ (to_time ctxt origin conv topConv r))
+  | convert_term _ _ _ _ _ = error "Invalid term to convert"
 
 (* Tactic to prove "f_dom n" *)
 fun time_dom_tac ctxt induct_rule domintros =
@@ -276,7 +296,7 @@ fun time_dom_tac ctxt induct_rule domintros =
         [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros]) i)))
 
 (* Convert given function into a timing function *)
-fun reg_time_func (theory: theory) (term: term) asymp print =
+fun reg_time_func (theory: theory) (term: term) conv topConv  print =
   let
     val lthy = Named_Target.theory_init theory
 
@@ -290,7 +310,7 @@ fun reg_time_func (theory: theory) (term: term) asymp print =
     (* 2. Find missing functions and define them *)
     val missing_funcs = find_missing lthy term (map right_of_equation terms)
     val theory = Local_Theory.exit_global lthy
-    val theory = List.foldr (fn (f, ctxt) => reg_time_func ctxt f asymp print |> snd) theory missing_funcs
+    val theory = List.foldr (fn (f, ctxt) => reg_time_func ctxt f conv topConv print |> snd) theory missing_funcs
     val lthy = Named_Target.theory_init theory
     
     (* 3. Convert every equation
@@ -298,7 +318,7 @@ fun reg_time_func (theory: theory) (term: term) asymp print =
       - On left side change name of function to timing function
       - Convert right side of equation with conversion schema
     *)
-    val timing_terms' = map (convert_term lthy term asymp) terms
+    val timing_terms' = map (convert_term lthy term conv topConv) terms
 
     (* 4. Register function and prove termination *)
     val name = Term.term_name term
@@ -349,24 +369,24 @@ fun reg_time_func (theory: theory) (term: term) asymp print =
     (* Context for printing without showing question marks *)
     val print_ctxt = Config.put show_question_marks false lthy''
     (* Print result if print *)
-    val _ = (if print then print_timing print_ctxt info time_info asymp else ())
+    val _ = (if print then print_timing print_ctxt info time_info else ())
   in
     (time_info, Local_Theory.exit_global lthy'')
   end;
 
 (* Convert function into its timing function (called by command) *)
-fun reg_time_func_cmd func asymp (theory: theory) =
+fun reg_time_func_cmd func conv topConv (theory: theory) =
 let
   val fterm = Syntax.read_term (Proof_Context.init_global theory) func
-  val (_, theory') = reg_time_func theory fterm asymp true
+  val (_, theory') = reg_time_func theory fterm conv topConv true
 in theory'
 end;
 
 val _ = Outer_Syntax.command @{command_keyword "define_time_fun"}
   "Defines runtime function of a function"
-  (Parse.prop >> (fn func => Toplevel.theory (reg_time_func_cmd func false)));
+  (Parse.prop >> (fn func => Toplevel.theory (reg_time_func_cmd func converter top_converter)));
 val _ = Outer_Syntax.command @{command_keyword "define_atime_fun"}
-  "Defines runtime function of a function"
-  (Parse.prop >> (fn func => Toplevel.theory (reg_time_func_cmd func true)));
+  "Defines asymptotic runtime function of a function"
+  (Parse.prop >> (fn func => Toplevel.theory (reg_time_func_cmd func aconverter atop_converter)));
 
 end

@@ -166,20 +166,8 @@ lemma "T_caseAdd' a b = t_caseAdd' a b"
   by (induction a) auto
 
 text \<open>Edge case of reduced cases\<close>
-fun test :: "nat * nat \<Rightarrow> nat" where
-  "test n = (case n of (a, b) \<Rightarrow> add a b)"
-define_time_fun test
-
-fun sub :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
-  "sub a 0 = a"
-| "sub 0 b = 0"
-| "sub (Suc a) (Suc b) = sub a b"
-define_atime_fun sub
-
-fun addsub :: "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat" where
-  "addsub as a b = (if as then add a b else sub a b)"
-fun t_addsub :: "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat" where
-  "t_addsub as a b = 1 + (if as then T_add a b + 1 + 1 else T_sub a b + 1 + 1) + 1"
-define_time_fun addsub
+fun edge_case :: "nat * nat \<Rightarrow> nat" where
+  "edge_case n = (case n of (a, b) \<Rightarrow> add a b)"
+define_time_fun edge_case
 
 end
