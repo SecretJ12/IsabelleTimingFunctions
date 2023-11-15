@@ -323,7 +323,10 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
     val info = SOME (Function.get_info lthy term) handle Empty => NONE
     val terms = case info of
           SOME i => terms_of_info i
-        | _ => map Thm.prop_of (Global_Theory.get_thms theory (Term.term_name term ^ ".simps"))
+        | _ => Spec_Rules.retrieve lthy term
+                |> hd
+                |> #rules
+                |> map Thm.prop_of
     val is_partial = case info of SOME {is_partial, ...} => is_partial | _ => false
 
     (* 1. Fix all terms *)
