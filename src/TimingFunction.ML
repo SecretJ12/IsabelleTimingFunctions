@@ -9,7 +9,10 @@ type 'a converter = {
 };
 val walk : local_theory -> term -> 'a converter -> term -> 'a
 
+type pfunc = { name : string, terms : term list, typ : typ }
+val fun_pretty':  Proof.context -> pfunc -> Pretty.T
 val fun_pretty:  Proof.context -> Function.info -> Pretty.T
+val print_timing':  Proof.context -> pfunc -> pfunc -> unit
 val print_timing:  Proof.context -> Function.info -> Function.info -> unit
 val reg_time_func: theory -> term -> 'a converter -> (local_theory -> term -> 'a -> term) -> bool -> Function.info * theory
 val reg_time_func_cmd: string -> 'a converter -> (local_theory -> term -> 'a -> term) -> theory -> theory
@@ -32,31 +35,43 @@ in
   map Thm.prop_of (case simps of SOME s => s | NONE => error "Function has no terms")
 end;
 
-(* Auxiliary functions for printing functions *)
-fun fun_pretty ctxt (info: Function.info) =
+type pfunc = {
+  name : string,
+  terms : term list,
+  typ : typ
+}
+fun info_pfunc (info: Function.info): pfunc =
 let
   val {defname, fs, ...} = info;
-  val name = Binding.name_of defname;
-  val typ = (case fs of (Const (_, typ)::_) => typ | (Free (_, typ)::_) => typ | _ => error "Type of function not implemented")
-  val trms = terms_of_info info;
+  val T = case hd fs of (Const (_,T)) => T | _ => error "Invalid info"
+in
+  { name=Binding.name_of defname, terms=terms_of_info info, typ=T }
+end
+
+(* Auxiliary functions for printing functions *)
+fun fun_pretty' ctxt (pfunc: pfunc) =
+let
+  val {name, terms, typ} = pfunc;
   val header_beg = Pretty.str ("fun " ^ name ^ " :: ");
   val header_end = Pretty.str (" where\n  ");
   val header = [header_beg, Pretty.quote (Syntax.pretty_typ ctxt typ), header_end];
   fun separate sep prts =
     flat (Library.separate [Pretty.str sep] (map single prts));
-  val ptrms = (separate "\n| " (map (Syntax.pretty_term ctxt) trms));
+  val ptrms = (separate "\n| " (map (Syntax.pretty_term ctxt) terms));
 in
   Pretty.text_fold (header @ ptrms)
-end;
-fun print_timing ctxt (oinfo: Function.info) (tinfo: Function.info) =
+end
+fun fun_pretty ctxt = fun_pretty' ctxt o info_pfunc
+fun print_timing' ctxt (opfunc: pfunc) (tpfunc: pfunc) =
 let
-  val {defname, ...} = oinfo;
-  val name = Binding.name_of defname;
-  val poriginal = Pretty.item [Pretty.str "Original function:\n", fun_pretty ctxt oinfo]
-  val ptiming = Pretty.item [Pretty.str ("Running time function:\n"), fun_pretty ctxt tinfo]
+  val {name, ...} = opfunc;
+  val poriginal = Pretty.item [Pretty.str "Original function:\n", fun_pretty' ctxt opfunc]
+  val ptiming = Pretty.item [Pretty.str ("Running time function:\n"), fun_pretty' ctxt tpfunc]
 in
   Pretty.writeln (Pretty.text_fold [Pretty.str ("Converting " ^ name ^ "...\n"), poriginal, Pretty.str "\n", ptiming])
-end;
+end
+fun print_timing ctxt (oinfo: Function.info) (tinfo: Function.info) =
+  print_timing' ctxt (info_pfunc oinfo) (info_pfunc tinfo)
 
 (* returns true if it's an if term *)
 fun is_if (Const (n,_)) = (n = "HOL.If")
@@ -84,6 +99,19 @@ fun count_args (Type (n, [_,res])) = (if n = "fun" then 1 + count_args res else 
 fun check_args s (Const (_,T), args) =
     (if length args = count_args T then () else error ("Partial applications not allowed (" ^ s ^ ")"))
   | check_args s _ = error ("Invalid function term (" ^ s ^ ")")
+
+fun time_term ctxt (Const (nm,T)) =
+let
+  val T_nm = fun_name_to_time nm
+  val T_T = change_typ T
+in
+(SOME (Syntax.check_term ctxt (Const (T_nm,T_T))))
+  handle (ERROR _) =>
+    case Syntax.read_term ctxt (Long_Name.base_name T_nm)
+      of (t as Const _) => SOME t
+       | _ => NONE
+end
+  | time_term _ _ = error "Invalid term"
 
 type 'a converter = {
   constc : local_theory -> term -> (term -> 'a) -> term -> 'a,
@@ -152,15 +180,6 @@ fun fixPartTerms ctxt term (pT $ (eq $ l $ r)) =
 (* 2. Check for undefined timing functions *)
 fun right_of_equation (_ $ (_ $ _ $ r)) = r
   | right_of_equation _ = error "Invalid equation"
-(* Check if it's the same theory *)
-fun same_theory t1 t2 =
-let
-  val splitter = (fn s => s = #".")
-  val parts1 = String.fields splitter t1
-  val parts2 = String.fields splitter t2
-in
-  (take (length parts1 - 1) parts1) = (take (length parts2 - 1) parts2)
-end
 (* Returns list of all function without a defined timing function *)
 fun check_fun ctxt origin f (func as Const (nm,T)) args =
 let
@@ -168,10 +187,8 @@ let
   val f_args = List.foldr (List.@) [] (map f args)
 in
   if nm = name_origin orelse Trivial_Funcs.is_trivial (Proof_Context.theory_of ctxt) (nm,T) then f_args else
-  (Syntax.check_term ctxt (Const (fun_name_to_time nm, change_typ T)) |> (K f_args))
-        handle (ERROR _) =>
-  if same_theory name_origin nm then func :: f_args
-    else error ("Can only convert functions of this theory: "^nm)
+      case time_term ctxt func of SOME _ => f_args
+                                | NONE => func :: f_args
 end
   | check_fun _ _ _ _ _ = error "Invalid function"
 (* Returns list of all functions with undefined timing functions *)
@@ -188,16 +205,14 @@ fun find_missing ctxt term terms =
 
 (* 3. Convert equations *)
 (* Change every term *)
-fun fun_to_time ctxt origin (Const (nm,T)) =
+fun fun_to_time ctxt origin (func as Const (nm,T)) =
 let
   val timing_name_origin = "T_" ^ Term.term_name origin
   val full_name_origin = origin |> dest_Const |> fst
-  val timing_name_other = fun_name_to_time nm
 in
   if nm = full_name_origin then SOME (Free (timing_name_origin, change_typ T)) else
   if Trivial_Funcs.is_trivial (Proof_Context.theory_of ctxt) (nm,T) then NONE else
-  SOME (Syntax.check_term ctxt (Const (timing_name_other,change_typ T))
-    handle (ERROR _) => Syntax.read_term ctxt (Long_Name.base_name timing_name_other))
+    time_term ctxt func
 end
   | fun_to_time _ _ _ = error "Invalid function to convert"
 
@@ -300,9 +315,16 @@ fun time_dom_tac ctxt induct_rule domintros =
 fun reg_time_func (theory: theory) (term: term) conv topConv  print =
   let
     val lthy = Named_Target.theory_init theory
+    val _ =
+      case time_term lthy term
+        of SOME _ => error "Timing function already declared"
+         | NONE => ()
 
-    val info = (Function.get_info lthy term) handle Empty => error "Cannot find function in current theory"
-    val terms = terms_of_info info;
+    val info = SOME (Function.get_info lthy term) handle Empty => NONE
+    val terms = case info of
+          SOME i => terms_of_info i
+        | _ => map Thm.prop_of (Global_Theory.get_thms theory (Term.term_name term ^ ".simps"))
+    val is_partial = case info of SOME {is_partial, ...} => is_partial | _ => false
 
     (* 1. Fix all terms *)
     (* Exchange Var in types and terms to Free *)
@@ -319,18 +341,17 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
       - On left side change name of function to timing function
       - Convert right side of equation with conversion schema
     *)
-    val timing_terms' = map (convert_term lthy term conv topConv) terms
+    val timing_terms = map (convert_term lthy term conv topConv) terms
 
     (* 4. Register function and prove termination *)
     val name = Term.term_name term
     val timing_name = fun_name_to_time name
-    val {is_partial, ...} = info
     val bindings = [(Binding.name timing_name, NONE, NoSyn)]
     val fun_config = Function_Common.FunctionConfig
       {sequential=false, default=NONE, domintros=true, partials=is_partial}
     fun pat_completeness_auto ctxt =
       Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
-    val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) timing_terms'
+    val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) timing_terms
     
     (* Register function *)
     val (_, lthy) =
@@ -341,8 +362,6 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
       | args _ = ("x",[])
     val dom_args = (case terms of ((_ $ (_ $ l $ _))::_) => args l |> snd | _ => error "Invalid function")
     
-    val {inducts, ...} = info
-    val induct = (Option.valOf inducts |> hd)               
     val lthy' = Named_Target.theory_init (Local_Theory.exit_global lthy)
   
     (* Proof by lexicographic_order_tac *)
@@ -352,6 +371,10 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
         handle (ERROR _) => 
         let
           val _ = warning "Falling back to proof over dom..."
+
+          val {inducts, ...} = case info of SOME i => i | _ => error "No inducts available"
+          val induct = (Option.valOf inducts |> hd)
+
           val domintros = Proof_Context.get_fact lthy' (Facts.named (timing_name ^ ".domintros"))
           val prop = (timing_name ^ "_dom (" ^ (String.concatWith "," dom_args) ^ ")")
                       |> Syntax.read_prop lthy'
@@ -370,7 +393,14 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
     (* Context for printing without showing question marks *)
     val print_ctxt = Config.put show_question_marks false lthy''
     (* Print result if print *)
-    val _ = (if print then print_timing print_ctxt info time_info else ())
+    val _ = if not print then () else case info of
+        SOME info => print_timing print_ctxt info time_info
+      | NONE =>
+        let
+          val (nm,T) = case term of Const t => t | _ => error "Invalid term"
+        in
+          print_timing' print_ctxt { name=nm, terms=terms, typ=T } (info_pfunc time_info)
+        end
   in
     (time_info, Local_Theory.exit_global lthy'')
   end;
