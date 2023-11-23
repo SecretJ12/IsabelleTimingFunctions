@@ -83,7 +83,7 @@ fun is_if (Const (n,_)) = (n = "HOL.If")
 fun is_case (Const (n,_)) = String.isPrefix "case_" (List.last (String.fields (fn s => s = #".") n))
   | is_case _ = false
 (* change type of original function to new type (_ \<Rightarrow> ... \<Rightarrow> _ to _ \<Rightarrow> ... \<Rightarrow> nat) *)
-fun change_typ (t as Type (n, [T1, T2])) = (if n = "fun" then Type (n, [T1, change_typ T2]) else t)
+fun change_typ (Type (n, [T1, T2])) = (if n = "fun" then Type (n, [T1, change_typ T2]) else natTyp)
   | change_typ _ = natTyp
 (* Convert string name of function to its timing equivalent *)
 fun fun_name_to_time ctxt name =
