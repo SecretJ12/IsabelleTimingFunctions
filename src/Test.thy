@@ -176,4 +176,8 @@ lemma T_append_length: "T_append xs ys = Suc (length xs)"
 lemma "T_rev xs = \<Sum>{1..Suc (length xs)}"
   by (induction xs) (auto simp: T_append_length)
 
+text \<open>Also allow definitions to be converted\<close>
+definition wrapper where "wrapper a b = add a b"
+define_time_fun wrapper
+
 end

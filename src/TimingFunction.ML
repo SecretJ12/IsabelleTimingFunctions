@@ -307,9 +307,7 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
          | NONE => ()
 
     val info = SOME (Function.get_info lthy term) handle Empty => NONE
-    val terms = case info of
-          SOME i => terms_of_info i
-        | _ => Spec_Rules.retrieve lthy term
+    val terms = Spec_Rules.retrieve lthy term
                 |> hd
                 |> #rules
                 |> map Thm.prop_of
