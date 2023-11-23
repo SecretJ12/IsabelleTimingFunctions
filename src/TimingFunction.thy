@@ -7,6 +7,8 @@ begin
 ML_file ZeroFuns.ML
 ML_file TimingFunction.ML
 
+declare [[time_prefix = "T_"]]
+
 define_time_0 "(+)"
 define_time_0 "(<)"
 define_time_0 "Not"

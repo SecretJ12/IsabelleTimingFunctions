@@ -23,6 +23,9 @@ end
 
 structure Timing_Functions : TIMING_FUNCTIONS =
 struct
+(* Configure config variable to adjust the prefix *)
+val bprefix = Attrib.setup_config_string @{binding "time_prefix"} (K "T_")
+
 (* some default values to build terms easier *)
 val natTyp = Type ("Nat.nat", [])
 val zero = Const ("Groups.zero_class.zero", natTyp)
@@ -83,9 +86,10 @@ fun is_case (Const (n,_)) = String.isPrefix "case_" (List.last (String.fields (f
 fun change_typ (t as Type (n, [T1, T2])) = (if n = "fun" then Type (n, [T1, change_typ T2]) else t)
   | change_typ _ = natTyp
 (* Convert string name of function to its timing equivalent *)
-fun fun_name_to_time name =
+fun fun_name_to_time ctxt name =
 let
-  fun replace_last_name [n] = ["T_" ^ n]
+  val prefix = Config.get ctxt bprefix
+  fun replace_last_name [n] = [prefix ^ n]
     | replace_last_name (n::ns) = n :: (replace_last_name ns)
     | replace_last_name _ = error "Invalid function with empty name"
   val parts = String.fields (fn s => s = #".") name
@@ -102,7 +106,7 @@ fun check_args s (Const (_,T), args) =
 
 fun time_term ctxt (Const (nm,T)) =
 let
-  val T_nm = fun_name_to_time nm
+  val T_nm = fun_name_to_time ctxt nm
   val T_T = change_typ T
 in
 (SOME (Syntax.check_term ctxt (Const (T_nm,T_T))))
@@ -217,7 +221,8 @@ fun opt_term NONE = zero
 (* Converting of function term *)
 fun fun_to_time ctxt origin (func as Const (nm,T)) =
 let
-  val timing_name_origin = "T_" ^ Term.term_name origin
+  val prefix = Config.get ctxt bprefix
+  val timing_name_origin = prefix ^ Term.term_name origin
   val full_name_origin = origin |> dest_Const |> fst
 in
   if nm = full_name_origin then SOME (Free (timing_name_origin, change_typ T)) else
@@ -329,7 +334,7 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
 
     (* 4. Register function and prove termination *)
     val name = Term.term_name term
-    val timing_name = fun_name_to_time name
+    val timing_name = fun_name_to_time lthy name
     val bindings = [(Binding.name timing_name, NONE, NoSyn)]
     val fun_config = Function_Common.FunctionConfig
       {sequential=false, default=NONE, domintros=true, partials=is_partial}
