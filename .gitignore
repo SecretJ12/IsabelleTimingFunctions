@@ -1,0 +1,5 @@
+.idea/**
+
+# Temporaray files of Isabelle
+**/**.thy~
+**/**.ML~
