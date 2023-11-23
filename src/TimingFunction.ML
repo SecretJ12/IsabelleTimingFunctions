@@ -110,9 +110,9 @@ let
   val T_T = change_typ T
 in
 (SOME (Syntax.check_term ctxt (Const (T_nm,T_T))))
-  handle (ERROR _) =>
+  handle (ERROR _) => (* TODO find better way detecting the correct function *)
     case Syntax.read_term ctxt (Long_Name.base_name T_nm)
-      of (t as Const _) => SOME t
+      of (Const (nm,_)) => SOME (Const (nm,T_T))
        | _ => NONE
 end
   | time_term _ _ = error "Invalid term"
@@ -270,7 +270,7 @@ fun ifc _ _ f cond tt ft =
   end
 
 (* The converter for timing functions given to the walker *)
-val aconverter : term option converter = {
+val converter : term option converter = {
         constc = fn _ => fn _ => fn _ => fn _ => NONE,
         funcc = funcc,
         ifc = ifc,
@@ -345,9 +345,9 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
       Function.add_function bindings specs fun_config pat_completeness_auto lthy
 
     (* Start proving the termination *)
-    fun args (a$_) = args a |> (fn (x,ar) => (x^"x",x::ar))
-      | args _ = ("x",[])
-    val dom_args = (case terms of ((_ $ (_ $ l $ _))::_) => args l |> snd | _ => error "Invalid function")
+    fun args (a$_) = args a |> (fn ar => "x"::ar)
+      | args _ = []
+    val dom_args = (case terms of ((_ $ (_ $ l $ _))::_) => (Variable.variant_fixes (args l) lthy) |> fst | _ => error "Invalid function")
     
     val lthy' = Named_Target.theory_init (Local_Theory.exit_global lthy)
   
@@ -378,7 +378,9 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
         end
     
     (* Context for printing without showing question marks *)
-    val print_ctxt = Config.put show_question_marks false lthy''
+    val print_ctxt = lthy''
+      |> Config.put show_question_marks false
+      |> Config.put show_sorts false (* Change it for debugging *)
     (* Print result if print *)
     val _ = if not print then () else case info of
         SOME info => print_timing print_ctxt info time_info
@@ -402,6 +404,6 @@ end;
 
 val _ = Outer_Syntax.command @{command_keyword "define_time_fun"}
   "Defines runtime function of a function"
-  (Parse.prop >> (fn func => Toplevel.theory (reg_time_func_cmd func aconverter top_converter)));
+  (Parse.prop >> (fn func => Toplevel.theory (reg_time_func_cmd func converter top_converter)));
 
 end
