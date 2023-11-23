@@ -30,7 +30,7 @@ and
 \<leadsto> (T_f (Suc n) = T_f n + 1)\<close>
 
 text \<open>The same function should be generated with the following command\<close>
-define_atime_fun f
+define_time_fun f
 lemma "t_f n = T_f n"
   by (induction n) auto
 
@@ -44,14 +44,14 @@ fun g :: "nat \<Rightarrow> nat" where
 | "g (Suc n) = Suc n + g n"
 define_time_fun g
 
-lemma "T_g x = 2 + 5*x"
+lemma "T_g x = 1 + x"
   by (induction x) auto
 
 text \<open>The command should work for all input types\<close>
 fun len :: "'a list \<Rightarrow> nat" where
   "len [] = 0"
 | "len (_#xs) = Suc (len xs)"
-define_atime_fun len
+define_time_fun len
 
 lemma "T_len xs = Suc (length (xs))"
   by (induction xs) auto
@@ -60,7 +60,7 @@ text \<open>An also multiple inputs and different output types\<close>
 fun itrev :: "'a list \<Rightarrow> 'a list \<Rightarrow> 'a list" where
   "itrev [] ys = ys"
 | "itrev (x#xs) ys = itrev xs (x#ys)"
-define_atime_fun itrev
+define_time_fun itrev
 
 lemma "T_itrev xs ys = 1 + length xs"
   by (induction xs arbitrary: ys) auto
@@ -71,7 +71,7 @@ fun itrev' :: "'a list \<Rightarrow> 'a list \<Rightarrow> 'a list" where
 | "itrev' (x#xs) ys = itrev' xs (x#ys)"
 fun Itrev' :: "'a list \<Rightarrow> 'a list" where
   "Itrev' xs = itrev' xs []"
-define_atime_fun Itrev'
+define_time_fun Itrev'
 value "T_Itrev' [a, b, c]"
 lemma T_itrev': "T_itrev' xs ys = 1 + length xs"
   by (induction xs arbitrary: ys) auto
@@ -85,7 +85,7 @@ fun is_odd :: "nat \<Rightarrow> bool" where
 fun t_is_odd :: "nat \<Rightarrow> nat" where
   "t_is_odd 0 = 1"
 | "t_is_odd (Suc n) = 1 + (if is_odd n then t_is_odd n else t_is_odd n) + t_is_odd n"
-define_atime_fun is_odd
+define_time_fun is_odd
 lemma "T_is_odd n = t_is_odd n"
   by (induction n) auto
 
@@ -106,10 +106,9 @@ fun mul where
 define_time_fun mul
 
 text \<open>Example proof\<close>
-lemma T_add: "T_add n m = 2 + (4*n)"
+lemma T_add: "T_add n m = 1 + n"
   by (induction n arbitrary: m) auto
-value "int (T_mul 1 0)"
-lemma "T_mul (Suc n) m = 2 + n*(4*m+7)"
+lemma "T_mul (Suc n) m = 1 + n*(m+2)"
   by (induction n arbitrary: m) (auto simp: T_add)
 
 text \<open>The command should define the timing function and prove termination with help of the original function\<close>
@@ -118,7 +117,7 @@ function p :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
   by auto
 termination
   by (relation "measure (\<lambda>(a,b). b - a)") auto
-define_atime_fun p
+define_time_fun p
 lemma "T_p 10 22 = 13"
   by simp
 
@@ -126,25 +125,25 @@ function r :: \<open>nat \<Rightarrow> bool\<close> where
 \<open>r n = (if n \<le> 1 then True else if (Suc 1) dvd n then r (n div (Suc 1)) else r ((Suc (Suc 1)) * n + 1))\<close>
   by auto
 termination sorry
-define_time_unit "(div)"
-define_time_unit "(dvd)"
-define_time_unit "(*)"
-define_time_unit "(\<le>)"
-define_atime_fun r
+define_time_0 "(div)"
+define_time_0 "(dvd)"
+define_time_0 "(*)"
+define_time_0 "(\<le>)"
+define_time_fun r
 
 text \<open>The command should handle case expressions\<close>
 fun default :: "'a option \<Rightarrow> 'a \<Rightarrow> 'a" where
   "default opt d = (case opt of None \<Rightarrow> d | Some v \<Rightarrow> v)"
 fun t_default :: "'a option \<Rightarrow> 'a \<Rightarrow> nat" where
   "t_default opt d = 1"
-define_atime_fun default
+define_time_fun default
 lemma "T_default opt d = t_default opt d"
   by auto
 
 fun default' :: "'a option \<Rightarrow> 'a \<Rightarrow> 'a" where
   "default' opt d = (case opt of None \<Rightarrow> d | Some v \<Rightarrow> v)"
 fun t_default' :: "'a option \<Rightarrow> 'a \<Rightarrow> nat" where
-  "t_default' opt d = 1 + (case opt of None \<Rightarrow> 1 | Some v \<Rightarrow> 1) + 1"
+  "t_default' opt d = 1"
 define_time_fun default'
 lemma "T_default' opt d = t_default' opt d"
   by (auto split: option.split)
@@ -153,14 +152,14 @@ fun caseAdd :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
   "caseAdd a b = (case a of 0 \<Rightarrow> b | Suc a' \<Rightarrow> Suc (caseAdd a' b))"
 fun t_caseAdd :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
   "t_caseAdd a b = 1 + (case a of 0 \<Rightarrow> 0 | Suc a' \<Rightarrow> t_caseAdd a' b)"
-define_atime_fun caseAdd
+define_time_fun caseAdd
 lemma "T_caseAdd a b = t_caseAdd a b"
   by (induction a) auto
 
 fun caseAdd' :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
   "caseAdd' a b = (case a of 0 \<Rightarrow> b | Suc a' \<Rightarrow> Suc (caseAdd' a' b))"
 fun t_caseAdd' :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
-  "t_caseAdd' a b = 1 + ((case a of 0 \<Rightarrow> 1 | Suc a' \<Rightarrow> 1 + t_caseAdd' a' b + 1 + 1) + 1)"
+  "t_caseAdd' a b = 1 + (case a of 0 \<Rightarrow> 0 | Suc a' \<Rightarrow> t_caseAdd' a' b)"
 define_time_fun caseAdd'
 lemma "T_caseAdd' a b = t_caseAdd' a b"
   by (induction a) auto
@@ -171,7 +170,7 @@ fun edge_case :: "nat * nat \<Rightarrow> nat" where
 define_time_fun edge_case
 
 text \<open>Allow conversion of library functions\<close>
-define_atime_fun rev
+define_time_fun rev
 lemma T_append_length: "T_append xs ys = Suc (length xs)"
   by (induction xs) auto
 lemma "T_rev xs = \<Sum>{1..Suc (length xs)}"

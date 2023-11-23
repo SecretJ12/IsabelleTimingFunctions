@@ -6,9 +6,9 @@ fun length :: "'a list \<Rightarrow> nat" where
   "length [] = 0"
 | "length (_#xs) = length xs + 1"
 
-define_atime_fun length
-define_atime_fun take
-define_atime_fun drop
+define_time_fun length
+define_time_fun take
+define_time_fun drop
 
 fun t_length :: "'a list \<Rightarrow> nat" where
   "t_length [] = 1"

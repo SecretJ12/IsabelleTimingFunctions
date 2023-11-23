@@ -186,7 +186,7 @@ let
   val name_origin = origin |> dest_Const |> fst
   val f_args = List.foldr (List.@) [] (map f args)
 in
-  if nm = name_origin orelse Trivial_Funcs.is_trivial (Proof_Context.theory_of ctxt) (nm,T) then f_args else
+  if nm = name_origin orelse Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) (nm,T) then f_args else
       case time_term ctxt func of SOME _ => f_args
                                 | NONE => func :: f_args
 end
@@ -204,32 +204,31 @@ fun find_missing ctxt term terms =
     }) terms)
 
 (* 3. Convert equations *)
-(* Change every term *)
+(* Some Helper *)
+val plusTyp = @{typ "nat => nat => nat"}
+fun plus (SOME a) (SOME b) = SOME (Const ("Groups.plus_class.plus", plusTyp) $ a $ b)
+  | plus (SOME a) NONE = SOME a
+  | plus NONE (SOME b) = SOME b
+  | plus NONE NONE = NONE
+fun opt_term NONE = zero
+  | opt_term (SOME t) = t
+
+
+(* Converting of function term *)
 fun fun_to_time ctxt origin (func as Const (nm,T)) =
 let
   val timing_name_origin = "T_" ^ Term.term_name origin
   val full_name_origin = origin |> dest_Const |> fst
 in
   if nm = full_name_origin then SOME (Free (timing_name_origin, change_typ T)) else
-  if Trivial_Funcs.is_trivial (Proof_Context.theory_of ctxt) (nm,T) then NONE else
+  if Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) (nm,T) then NONE else
     time_term ctxt func
 end
   | fun_to_time _ _ _ = error "Invalid function to convert"
-
-(* Normal conversion *)
-val plusTyp = @{typ "nat => nat => nat"}
-fun plus a b = (Const ("Groups.plus_class.plus", plusTyp) $ a $ b)
-fun opt_term NONE = one
-  | opt_term (SOME t) = t
 fun funcc ctxt origin f func args = List.foldr (I #-> plus)
-  (case fun_to_time ctxt origin func of SOME t => build_func (t,args) | NONE => one) (map f args)
-fun ifc _ _ f cond tt ft =
-  plus ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ cond $ (f tt) $ (f ft)) (f cond)
-fun casecAbs f (Abs (v,Ta,t)) = Abs (v,Ta,casecAbs f t)
-  | casecAbs f t = f t
-fun casecArgs _ [t] = [t]
-  | casecArgs f (t::ar) = casecAbs f t :: casecArgs f ar
-  | casecArgs _ _ = error "Invalid case term"
+  (case fun_to_time ctxt origin func of SOME t => SOME (build_func (t,args)) | NONE => NONE) (map f args)
+
+(* Handle case terms *)
 fun casecIsCase (Type (n1, [_,Type (n2, _)])) = (n1 = "fun" andalso n2 = "fun")
   | casecIsCase _ = false
 fun casecLastTyp (Type (n, [T1,T2])) = Type (n, [T1, change_typ T2])
@@ -237,60 +236,42 @@ fun casecLastTyp (Type (n, [T1,T2])) = Type (n, [T1, change_typ T2])
 fun casecTyp (Type (n, [T1, T2])) =
       Type (n, [change_typ T1, (if casecIsCase T2 then casecTyp else casecLastTyp) T2])
   | casecTyp _ = error "Invalid case type"
+fun casecAbs f (Abs (v,Ta,t)) = (case casecAbs f t of (nconst,t) => (nconst,Abs (v,Ta,t)))
+  | casecAbs f t = (case f t of NONE => (false,zero) | SOME t => (true,t))
+fun casecArgs _ [t] = (false, [t])
+  | casecArgs f (t::ar) =
+    (case casecAbs f t of (nconst, tt) => 
+      casecArgs f ar ||> (fn ar => tt :: ar) |>> (if nconst then K true else I))
+  | casecArgs _ _ = error "Invalid case term"
 fun casec _ _ f (Const (t,T)) args =
   if not (casecIsCase T) then error "Invalid case type" else
-    plus (build_func (Const (t,casecTyp T), casecArgs f args)) (f (List.last args))
-  | casec _ _ _ _ _ = error "Invalid case term"
-val converter : term converter = {
-        constc = fn _ => fn _ => fn _ => fn _ => one,
-        funcc = funcc,
-        ifc = ifc,
-        casec = casec
-    }
-fun top_converter _ _ = plus one
-
-(* Asymptotic conversion *)
-fun aplus (SOME a) (SOME b) = SOME (Const ("Groups.plus_class.plus", plusTyp) $ a $ b)
-  | aplus (SOME a) NONE = SOME a
-  | aplus NONE (SOME b) = SOME b
-  | aplus NONE NONE = NONE
-fun aopt_term NONE = zero
-  | aopt_term (SOME t) = t
-(* Compose an if term if the true and false terms are not NONE *)
-fun afuncc ctxt origin f func args = List.foldr (I #-> aplus) 
-  (case fun_to_time ctxt origin func of SOME t => SOME (build_func (t,args)) | NONE => NONE) (map f args)
-fun aifc _ _ f cond tt ft =
-  let
-    val tt = f tt
-    val ft = f ft
-  in
-    (case (tt,ft) of (NONE, NONE) => NONE | _ =>    
-      aplus (SOME ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ cond $ (aopt_term tt) $ (aopt_term ft))) (f cond))
-  end
-fun acasecAbs f (Abs (v,Ta,t)) = (case acasecAbs f t of (nconst,t) => (nconst,Abs (v,Ta,t)))
-  | acasecAbs f t = (case f t of NONE => (false,zero) | SOME t => (true,t))
-fun acasecArgs _ [t] = (false, [t])
-  | acasecArgs f (t::ar) =
-    (case acasecAbs f t of (nconst, tt) => 
-      acasecArgs f ar ||> (fn ar => tt :: ar) |>> (if nconst then K true else I))
-  | acasecArgs _ _ = error "Invalid case term"
-fun acasec _ _ f (Const (t,T)) args =
-  if not (casecIsCase T) then error "Invalid case type" else
-    let val (nconst, args') = acasecArgs f args in
-      aplus
+    let val (nconst, args') = casecArgs f args in
+      plus
         (if nconst then
           SOME (build_func (Const (t,casecTyp T), args'))
          else NONE)
         (f (List.last args))
     end
-  | acasec _ _ _ _ _ = error "Invalid case term"
+  | casec _ _ _ _ _ = error "Invalid case term"
+
+(* Handle if terms -> drop the term if true and false terms are zero *)
+fun ifc _ _ f cond tt ft =
+  let
+    val tt = f tt
+    val ft = f ft
+  in
+    (case (tt,ft) of (NONE, NONE) => NONE | _ =>
+      plus (SOME ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ cond $ (opt_term tt) $ (opt_term ft))) (f cond))
+  end
+
+(* The converter for timing functions given to the walker *)
 val aconverter : term option converter = {
         constc = fn _ => fn _ => fn _ => fn _ => NONE,
-        funcc = afuncc,
-        ifc = aifc,
-        casec = acasec
+        funcc = funcc,
+        ifc = ifc,
+        casec = casec
     }
-fun atop_converter _ _ = opt_term o (aplus (SOME one))
+fun top_converter _ _ = opt_term o (plus (SOME one))
 
 (* Use converter to convert right side of a term *)
 fun to_time ctxt origin converter top_converter term = 
@@ -304,14 +285,14 @@ fun convert_term ctxt origin conv topConv (pT $ (Const (eqN, _) $ l $ r)) =
         $ (to_time ctxt origin conv topConv r))
   | convert_term _ _ _ _ _ = error "Invalid term to convert"
 
-(* Tactic to prove "f_dom n" *)
+(* 4. Tactic to prove "f_dom n" *)
 fun time_dom_tac ctxt induct_rule domintros =
   (Induction.induction_tac ctxt true [] [[]] [] (SOME [induct_rule]) []
       THEN_ALL_NEW ((K (auto_tac ctxt)) THEN' (fn i => FIRST' (
         (if i <= length domintros then [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt [List.nth (domintros, i-1)]] else []) @
         [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros]) i)))
 
-(* Convert given function into a timing function *)
+(* MAIN Convert given function into a timing function *)
 fun reg_time_func (theory: theory) (term: term) conv topConv  print =
   let
     val lthy = Named_Target.theory_init theory
@@ -418,9 +399,6 @@ end;
 
 val _ = Outer_Syntax.command @{command_keyword "define_time_fun"}
   "Defines runtime function of a function"
-  (Parse.prop >> (fn func => Toplevel.theory (reg_time_func_cmd func converter top_converter)));
-val _ = Outer_Syntax.command @{command_keyword "define_atime_fun"}
-  "Defines asymptotic runtime function of a function"
-  (Parse.prop >> (fn func => Toplevel.theory (reg_time_func_cmd func aconverter atop_converter)));
+  (Parse.prop >> (fn func => Toplevel.theory (reg_time_func_cmd func aconverter top_converter)));
 
 end
