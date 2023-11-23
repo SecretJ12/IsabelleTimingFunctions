@@ -179,7 +179,7 @@ fun fixPartTerms ctxt term (pT $ (eq $ l $ r)) =
           casec = fixCasec
       } r))
   end
-  | fixPartTerms _ _ _ = error "Invalid term to fix"
+  | fixPartTerms _ term _ = error ("Invalid term to fix: " ^ (term |> dest_Const |> fst))
 
 (* 2. Check for undefined timing functions *)
 fun right_of_equation (_ $ (_ $ _ $ r)) = r
@@ -335,11 +335,11 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
     val timing_name = fun_name_to_time lthy name
     val bindings = [(Binding.name timing_name, NONE, NoSyn)]
     val fun_config = Function_Common.FunctionConfig
-      {sequential=false, default=NONE, domintros=true, partials=is_partial}
+      {sequential=true, default=NONE, domintros=true, partials=is_partial}
     fun pat_completeness_auto ctxt =
       Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
     val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) timing_terms
-    
+
     (* Register function *)
     val (_, lthy) =
       Function.add_function bindings specs fun_config pat_completeness_auto lthy
