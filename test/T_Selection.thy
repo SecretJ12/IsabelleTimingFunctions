@@ -18,6 +18,9 @@ text \<open>slow_median needs T_List as length cannot be converted correctly oth
 define_time_0 length
 define_time_fun slow_median
 
+declare [[time_prefix = "T''_"]]
+text \<open>mom_select uses a lambda through map\<close>
+
 text \<open>Proofs about equality\<close>
 theorem "T'_chop n xs = T_chop n xs"
   oops
