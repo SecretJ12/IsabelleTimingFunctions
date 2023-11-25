@@ -6,7 +6,7 @@ type 'a converter = {
   funcc : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a,
   ifc : local_theory -> term -> (term -> 'a) -> typ -> term -> term -> term -> 'a,
   casec : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a,
-  letc : local_theory -> term -> (term -> 'a) -> typ -> term -> string -> typ -> term -> 'a
+  letc : local_theory -> term -> (term -> 'a) -> typ -> term -> string list -> typ list -> term -> 'a
 };
 val walk : local_theory -> term -> 'a converter -> term -> 'a
 
@@ -126,7 +126,7 @@ type 'a converter = {
   funcc : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a,
   ifc : local_theory -> term -> (term -> 'a) -> typ -> term -> term -> term -> 'a,
   casec : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a,
-  letc : local_theory -> term -> (term -> 'a) -> typ -> term -> string -> typ -> term -> 'a
+  letc : local_theory -> term -> (term -> 'a) -> typ -> term -> string list -> typ list -> term -> 'a
 };
 
 (* Count number of arguments needed for a function *)
@@ -136,6 +136,11 @@ fun walk_func (t1 $ t2) ts = walk_func t1 (t2::ts)
   | walk_func t ts = (t, ts)
 fun build_func (f, []) = f
   | build_func (f, (t::ts)) = build_func (f$t, ts)
+fun walk_abs (Abs (nm,T,t)) nms Ts = walk_abs t (nm::nms) (T::Ts)
+  | walk_abs t nms Ts = (t, nms, Ts)
+fun build_abs t (nm::nms) (T::Ts) = build_abs (Abs (nm,T,t)) nms Ts
+  | build_abs t [] [] = t
+  | build_abs _ _ _ = error "Invalid abs to build"
 fun walk ctxt origin (conv as {ifc, casec, funcc, letc, ...} : 'a converter) (t as _ $ _) =
   let
     val (f, args) = walk_func t []
@@ -150,7 +155,8 @@ fun walk ctxt origin (conv as {ifc, casec, funcc, letc, ...} : 'a converter) (t 
       else if is_case f then casec ctxt origin this f args
       else if is_let f then
       (case f of (Const (_,lT)) =>
-         (case args of [exp, Abs (nm,T,t)] => letc ctxt origin this lT exp nm T t
+         (case args of [exp, t] => 
+            let val (t,nms,Ts) = walk_abs t [] [] in letc ctxt origin this lT exp nms Ts t end
                      | _ => error "Partial applications not allowed (let)")
                | _ => error "Invalid let term")
       else funcc ctxt origin this f args)
@@ -178,6 +184,7 @@ fun fixCasecCases _ _ _ [t] = [t]
 fun fixCasec ctxt _ f (t as Const (n,T)) args =
       (check_args "cases" (Syntax.read_term ctxt n,args); build_func (t,fixCasecCases ctxt f T args))
   | fixCasec _ _ _ _ _ = error "Invalid case term"
+
 fun fixPartTerms ctxt term (pT $ (eq $ l $ r)) =
   let
     val _ = check_args "args" (walk_func l [])
@@ -189,8 +196,13 @@ fun fixPartTerms ctxt term (pT $ (eq $ l $ r)) =
           ifc = (fn _ => fn _ => fn f => fn T => fn cond => fn tt => fn tf =>
             ((Const ("HOL.If", T)) $ f cond $ (f tt) $ (f tf))),
           casec = fixCasec,
-          letc = (fn _ => fn _ => fn f => fn Texp => fn exp => fn nm => fn T => fn t =>
-              (Const ("HOL.Let",Texp) $ (f exp) $ Abs (nm,T,f t)))
+          letc = (fn _ => fn _ => fn f => fn expT => fn exp => fn nms => fn Ts => fn t =>
+              let
+                val f' = if length nms = 0 then
+                (case f (t$exp) of t$_ => t | _ => error "Case could not be fixed (let)")
+                else f t
+              in
+              (Const ("HOL.Let",expT) $ (f exp) $ build_abs f' nms Ts) end)
       } r))
   end
   | fixPartTerms _ term _ = error ("Invalid term to fix: " ^ (term |> dest_Const |> fst))
@@ -284,8 +296,12 @@ fun ifc _ _ f _ cond tt ft =
       plus (SOME ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ cond $ (opt_term tt) $ (opt_term ft))) (f cond))
   end
 
-fun letc _ _ f _ exp nm T t =
-    plus (f exp) (SOME (Abs (nm,T,opt_term (f t)) $ exp))
+fun exp_type (Type (_, [T1, _])) = T1
+  | exp_type _ = error "No valid let type"
+fun letc _ _ f expT exp nms Ts t =
+    if length nms = 0
+    then plus (f exp) (SOME (Abs ("x", exp_type expT, opt_term (f (t $ Bound 0))) $ exp))
+    else plus (f exp) (SOME (build_abs (opt_term (f t)) nms Ts $ exp))
 
 (* The converter for timing functions given to the walker *)
 val converter : term option converter = {
@@ -322,7 +338,7 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
     val lthy = Named_Target.theory_init theory
     val _ =
       case time_term lthy term
-        of SOME _ => error "Timing function already declared"
+        of SOME _ => error ("Timing function already declared: " ^ (Term.term_name term))
          | NONE => ()
 
     val info = SOME (Function.get_info lthy term) handle Empty => NONE
@@ -337,7 +353,9 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
     val terms = map (map_aterms fixTerms #> map_types (map_atyps fixTypes) #> fixPartTerms lthy term) terms
 
     (* 2. Find missing functions and define them *)
-    val missing_funcs = find_missing lthy term (map right_of_equation terms)
+    fun unique [] = []
+      | unique (x::xs) = x::List.filter (fn x' => x <> x') xs
+    val missing_funcs = find_missing lthy term (map right_of_equation terms) |> unique
     val theory = Local_Theory.exit_global lthy
     val theory = List.foldr (fn (f, ctxt) => reg_time_func ctxt f conv topConv print |> snd) theory missing_funcs
     val lthy = Named_Target.theory_init theory

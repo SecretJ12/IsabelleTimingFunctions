@@ -191,4 +191,10 @@ fun mirror :: "dummyTree \<Rightarrow> dummyTree" where
     in dummy (Node r' l'))"
 define_time_fun mirror
 
+text \<open>Handle pattern matching in let\<close>
+fun first :: "'a * 'b \<Rightarrow> 'a" where
+  "first pair =
+    (let (a,b) = dummy pair in dummy a)"
+define_time_fun first
+
 end
