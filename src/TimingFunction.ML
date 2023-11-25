@@ -4,8 +4,9 @@ sig
 type 'a converter = {
   constc : local_theory -> term -> (term -> 'a) -> term -> 'a,
   funcc : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a,
-  ifc : local_theory -> term -> (term -> 'a) -> term -> term -> term -> 'a,
-  casec : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a
+  ifc : local_theory -> term -> (term -> 'a) -> typ -> term -> term -> term -> 'a,
+  casec : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a,
+  letc : local_theory -> term -> (term -> 'a) -> typ -> term -> string -> typ -> term -> 'a
 };
 val walk : local_theory -> term -> 'a converter -> term -> 'a
 
@@ -79,9 +80,12 @@ fun print_timing ctxt (oinfo: Function.info) (tinfo: Function.info) =
 (* returns true if it's an if term *)
 fun is_if (Const (n,_)) = (n = "HOL.If")
   | is_if _ = false
-(* returns true if it's an case term *)
+(* returns true if it's a case term *)
 fun is_case (Const (n,_)) = String.isPrefix "case_" (List.last (String.fields (fn s => s = #".") n))
   | is_case _ = false
+(* returns true if it's a let term *)
+fun is_let (Const (n,_)) = (n = "HOL.Let")
+  | is_let _ = false
 (* change type of original function to new type (_ \<Rightarrow> ... \<Rightarrow> _ to _ \<Rightarrow> ... \<Rightarrow> nat) *)
 fun change_typ (Type (n, [T1, T2])) = (if n = "fun" then Type (n, [T1, change_typ T2]) else natTyp)
   | change_typ _ = natTyp
@@ -120,8 +124,9 @@ end
 type 'a converter = {
   constc : local_theory -> term -> (term -> 'a) -> term -> 'a,
   funcc : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a,
-  ifc : local_theory -> term -> (term -> 'a) -> term -> term -> term -> 'a,
-  casec : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a
+  ifc : local_theory -> term -> (term -> 'a) -> typ -> term -> term -> term -> 'a,
+  casec : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a,
+  letc : local_theory -> term -> (term -> 'a) -> typ -> term -> string -> typ -> term -> 'a
 };
 
 (* Count number of arguments needed for a function *)
@@ -131,16 +136,23 @@ fun walk_func (t1 $ t2) ts = walk_func t1 (t2::ts)
   | walk_func t ts = (t, ts)
 fun build_func (f, []) = f
   | build_func (f, (t::ts)) = build_func (f$t, ts)
-fun walk ctxt origin (conv as {ifc, casec, funcc, ...}) (t as _ $ _) =
+fun walk ctxt origin (conv as {ifc, casec, funcc, letc, ...} : 'a converter) (t as _ $ _) =
   let
     val (f, args) = walk_func t []
     val this = (walk ctxt origin conv)
     val _ = (case f of Abs _ => error "Lambdas are not allowed" | _ => ())
   in
     (if is_if f then
-      (case args of [cond, t, f] => ifc ctxt origin this cond t f
-                  | _ => error "Partial applications not allowed (if)")
+      (case f of (Const (_,T)) =>
+        (case args of [cond, t, f] => ifc ctxt origin this T cond t f
+                   | _ => error "Partial applications not allowed (if)")
+               | _ => error "Invalid if term")
       else if is_case f then casec ctxt origin this f args
+      else if is_let f then
+      (case f of (Const (_,lT)) =>
+         (case args of [exp, Abs (nm,T,t)] => letc ctxt origin this lT exp nm T t
+                     | _ => error "Partial applications not allowed (let)")
+               | _ => error "Invalid let term")
       else funcc ctxt origin this f args)
   end
   | walk ctxt origin (conv as {constc, ...}) c = 
@@ -174,9 +186,11 @@ fun fixPartTerms ctxt term (pT $ (eq $ l $ r)) =
           funcc = (fn _ => fn _ => fn f => fn t => fn args =>
               (check_args "func" (t,args); build_func (t, map f args))),
           constc = (fn _ => fn _ => fn _ => fn c => c),
-          ifc = (fn _ => fn _ => fn f => fn cond => fn tt => fn tf =>
-            ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ f cond $ (f tt) $ (f tf))),
-          casec = fixCasec
+          ifc = (fn _ => fn _ => fn f => fn T => fn cond => fn tt => fn tf =>
+            ((Const ("HOL.If", T)) $ f cond $ (f tt) $ (f tf))),
+          casec = fixCasec,
+          letc = (fn _ => fn _ => fn f => fn Texp => fn exp => fn nm => fn T => fn t =>
+              (Const ("HOL.Let",Texp) $ (f exp) $ Abs (nm,T,f t)))
       } r))
   end
   | fixPartTerms _ term _ = error ("Invalid term to fix: " ^ (term |> dest_Const |> fst))
@@ -203,8 +217,9 @@ fun find_missing ctxt term terms =
     (map (walk ctxt term {
         funcc = check_fun,
         constc = ((K o K o K o K) []),
-        ifc = (fn _ => fn _ => fn f => fn cond => fn t => fn r => f cond @ f t @ f r),
-        casec = (fn _ => fn _ => fn f => fn t => fn args => f t @ List.foldr (fn (t,fs) => casecMisAbs f t @ fs) [] args)
+        ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn t => fn r => f cond @ f t @ f r),
+        casec = (fn _ => fn _ => fn f => fn t => fn args => f t @ List.foldr (fn (t,fs) => casecMisAbs f t @ fs) [] args),
+        letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp @ f t)
     }) terms)
 
 (* 3. Convert equations *)
@@ -260,7 +275,7 @@ fun casec _ _ f (Const (t,T)) args =
   | casec _ _ _ _ _ = error "Invalid case term"
 
 (* Handle if terms -> drop the term if true and false terms are zero *)
-fun ifc _ _ f cond tt ft =
+fun ifc _ _ f _ cond tt ft =
   let
     val tt = f tt
     val ft = f ft
@@ -269,12 +284,16 @@ fun ifc _ _ f cond tt ft =
       plus (SOME ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ cond $ (opt_term tt) $ (opt_term ft))) (f cond))
   end
 
+fun letc _ _ f _ exp nm T t =
+    plus (f exp) (SOME (Abs (nm,T,opt_term (f t)) $ exp))
+
 (* The converter for timing functions given to the walker *)
 val converter : term option converter = {
         constc = fn _ => fn _ => fn _ => fn _ => NONE,
         funcc = funcc,
         ifc = ifc,
-        casec = casec
+        casec = casec,
+        letc = letc
     }
 fun top_converter _ _ = opt_term o (plus (SOME one))
 

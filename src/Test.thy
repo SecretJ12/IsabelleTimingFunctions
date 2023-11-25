@@ -112,24 +112,24 @@ lemma "T_mul (Suc n) m = 1 + n*(m+2)"
   by (induction n arbitrary: m) (auto simp: T_add)
 
 text \<open>The command should define the timing function and prove termination with help of the original function\<close>
-function p :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
-  "p a b = (if a < b then p (Suc a) b else a)"
+function terminationA :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
+  "terminationA a b = (if a < b then terminationA (Suc a) b else a)"
   by auto
 termination
   by (relation "measure (\<lambda>(a,b). b - a)") auto
-define_time_fun p
-lemma "T_p 10 22 = 13"
+define_time_fun terminationA
+lemma "T_terminationA 10 22 = 13"
   by simp
 
-function r :: \<open>nat \<Rightarrow> bool\<close> where
-\<open>r n = (if n \<le> 1 then True else if (Suc 1) dvd n then r (n div (Suc 1)) else r ((Suc (Suc 1)) * n + 1))\<close>
+function terminationB :: \<open>nat \<Rightarrow> bool\<close> where
+\<open>terminationB n = (if n \<le> 1 then True else if (Suc 1) dvd n then terminationB (n div (Suc 1)) else terminationB ((Suc (Suc 1)) * n + 1))\<close>
   by auto
 termination sorry
 define_time_0 "(div)"
 define_time_0 "(dvd)"
 define_time_0 "(*)"
 define_time_0 "(\<le>)"
-define_time_fun r
+define_time_fun terminationB
 
 text \<open>The command should handle case expressions\<close>
 fun default :: "'a option \<Rightarrow> 'a \<Rightarrow> 'a" where
@@ -179,5 +179,16 @@ lemma "T_rev xs = \<Sum>{1..Suc (length xs)}"
 text \<open>Also allow definitions to be converted\<close>
 definition wrapper where "wrapper a b = add a b"
 define_time_fun wrapper
+
+
+text \<open>Handle let expressions correctly\<close>
+datatype dummyTree = Leaf | Node dummyTree dummyTree
+fun dummy where "dummy T = T"
+fun mirror :: "dummyTree \<Rightarrow> dummyTree" where
+  "mirror Leaf = Leaf"
+| "mirror (Node l r) =
+    (let l' = mirror l in let r' = mirror r
+    in dummy (Node r' l'))"
+define_time_fun mirror
 
 end
