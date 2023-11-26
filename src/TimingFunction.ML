@@ -327,10 +327,20 @@ fun convert_term ctxt origin conv topConv (pT $ (Const (eqN, _) $ l $ r)) =
 
 (* 4. Tactic to prove "f_dom n" *)
 fun time_dom_tac ctxt induct_rule domintros =
-  (Induction.induction_tac ctxt true [] [[]] [] (SOME [induct_rule]) []
-      THEN_ALL_NEW ((K (auto_tac ctxt)) THEN' (fn i => FIRST' (
-        (if i <= length domintros then [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt [List.nth (domintros, i-1)]] else []) @
-        [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros]) i)))
+  let
+    val dom_ctxt = List.foldr (fn (d,ctxt) => Simplifier.add_simp d ctxt) ctxt domintros
+  in
+    (Induction.induction_tac ctxt true [] [[]] [] (SOME [induct_rule]) []
+        THEN_ALL_NEW (FIRST'
+          (* Try different tactics, first only metis then metis with auto then only auto *)
+          [
+            (fn i => Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt [List.nth (domintros, i-1)] i),
+            ((K (auto_tac ctxt)) THEN' (fn i => FIRST' (
+            (if i <= length domintros then [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt [List.nth (domintros, i-1)]] else []) @
+            [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros]) i)),
+            K (auto_tac dom_ctxt)
+          ]))
+  end
 
 (* MAIN Convert given function into a timing function *)
 fun reg_time_func (theory: theory) (term: term) conv topConv  print =
@@ -372,29 +382,42 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
     val timing_name = fun_name_to_time lthy name
     val bindings = [(Binding.name timing_name, NONE, NoSyn)]
     val fun_config = Function_Common.FunctionConfig
-      {sequential=true, default=NONE, domintros=true, partials=is_partial}
+      {sequential=false, default=NONE, domintros=true, partials=is_partial}
     fun pat_completeness_auto ctxt =
       Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
     val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) timing_terms
 
+    (* For partial functions sequential=true is needed in order to support them
+       We need sequential=false to support the automatic proof of termination over dom
+    *)
+
     (* Register function *)
     val (_, lthy) =
       Function.add_function bindings specs fun_config pat_completeness_auto lthy
+      handle (ERROR _) =>
+      let
+        val _ = warning "Falling back to sequential function..."
+        val fun_config = Function_Common.FunctionConfig
+          {sequential=true, default=NONE, domintros=true, partials=is_partial}
+      in
+        Function.add_function bindings specs fun_config pat_completeness_auto lthy
+      end
 
-    (* Start proving the termination *)
-    fun args (a$_) = args a |> (fn ar => "x"::ar)
-      | args _ = []
-    val dom_args = (case terms of ((_ $ (_ $ l $ _))::_) => (Variable.variant_fixes (args l) lthy) |> fst | _ => error "Invalid function")
-    
+    (* Start proving the termination *)    
     val lthy' = Named_Target.theory_init (Local_Theory.exit_global lthy)
   
     (* Proof by lexicographic_order_tac *)
     val (time_info, lthy'') =
       (Function.prove_termination NONE
         (Lexicographic_Order.lexicographic_order_tac false lthy') lthy')
-        handle (ERROR _) => 
+        handle (ERROR _) =>
         let
           val _ = warning "Falling back to proof over dom..."
+          fun args (a$(Free (nm,T))) = args a |> (fn ar => (nm,T)::ar)
+            | args (a$(Const (_,T))) = args a |> (fn ar => ("x",T)::ar)
+            | args _ = []
+          val dom_args = map fst (case terms of ((_ $ (_ $ l $ _))::_) => (Variable.variant_frees lthy' [] (args l))
+                                      | _ => error "Invalid function")
 
           val {inducts, ...} = case info of SOME i => i | _ => error "No inducts available"
           val induct = (Option.valOf inducts |> hd)
@@ -402,6 +425,7 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
           val domintros = Proof_Context.get_fact lthy' (Facts.named (timing_name ^ ".domintros"))
           val prop = (timing_name ^ "_dom (" ^ (String.concatWith "," dom_args) ^ ")")
                       |> Syntax.read_prop lthy'
+
           (* Prove a helper lemma *)
           val dom_lemma = Goal.prove lthy' dom_args [] prop
             (fn {context, ...} => HEADGOAL (time_dom_tac context induct domintros))

@@ -5,12 +5,12 @@ begin
 declare [[time_prefix = "T'_"]]
 
 text \<open>Define timing function\<close>
-text \<open>merge contains let\<close>
 text \<open>Failed to proove termination of meld:\<close>
-define_time_fun Skew_Heap.insert
-define_time_fun del_min
+define_time_fun merge
 
 text \<open>Proove equality\<close>
-
+theorem meld: "T'_merge t1 t2 = T_merge t1 t2"
+  apply (induction rule: T_merge.induct)
+  using T'_merge.elims by auto
 
 end
