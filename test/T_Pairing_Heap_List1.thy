@@ -5,13 +5,12 @@ begin
 declare [[time_prefix = "T'_"]]
 
 text \<open>Define timing function\<close>
-text \<open>merge includes let via :=\<close>
-text \<open>insert uses merge\<close>
-text \<open>del_min uses merge\<close>
-text \<open>pass_1 uses merge\<close>
-text \<open>pass_2 uses merge\<close>
+define_time_fun merge
+define_time_fun insert
+define_time_fun pass\<^sub>1
+define_time_fun pass\<^sub>2
+define_time_fun del_min
 
 text \<open>Proove equality\<close>
-
 
 end
