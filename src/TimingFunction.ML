@@ -330,17 +330,17 @@ fun time_dom_tac ctxt induct_rule domintros =
   let
     val dom_ctxt = List.foldr (fn (d,ctxt) => Simplifier.add_simp d ctxt) ctxt domintros
   in
-    (Induction.induction_tac ctxt true [] [[]] [] (SOME [induct_rule]) []
-        THEN_ALL_NEW (FIRST'
-          (* Try different tactics, first only metis then metis with auto then only auto *)
-          [
-            (fn i => Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt [List.nth (domintros, i-1)] i),
-            ((K (auto_tac ctxt)) THEN' (fn i => FIRST' (
-            (if i <= length domintros then [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt [List.nth (domintros, i-1)]] else []) @
-            [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros]) i)),
-            K (auto_tac dom_ctxt)
-          ]))
+    FIRST' [
+      (Induction.induction_tac ctxt true [] [[]] [] (SOME [induct_rule]) []
+        THEN_ALL_NEW ((K (auto_tac ctxt)) THEN' (fn i => FIRST' (
+        (if i <= length domintros then [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt [List.nth (domintros, i-1)]] else []) @
+        [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros]) i)))
+    ]
   end
+
+(*
+  
+*)
 
 (* MAIN Convert given function into a timing function *)
 fun reg_time_func (theory: theory) (term: term) conv topConv  print =
@@ -394,9 +394,9 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
     (* Register function *)
     val (_, lthy) =
       Function.add_function bindings specs fun_config pat_completeness_auto lthy
-      handle (ERROR _) =>
+      handle _ =>
       let
-        val _ = warning "Falling back to sequential function..."
+        val _ = warning "Falling back on sequential function..."
         val fun_config = Function_Common.FunctionConfig
           {sequential=true, default=NONE, domintros=true, partials=is_partial}
       in
@@ -412,7 +412,7 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
         (Lexicographic_Order.lexicographic_order_tac false lthy') lthy')
         handle (ERROR _) =>
         let
-          val _ = warning "Falling back to proof over dom..."
+          val _ = warning "Falling back on proof over dom..."
           fun args (a$(Free (nm,T))) = args a |> (fn ar => (nm,T)::ar)
             | args (a$(Const (_,T))) = args a |> (fn ar => ("x",T)::ar)
             | args _ = []
