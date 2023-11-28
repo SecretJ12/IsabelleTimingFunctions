@@ -327,16 +327,10 @@ fun convert_term ctxt origin conv topConv (pT $ (Const (eqN, _) $ l $ r)) =
 
 (* 4. Tactic to prove "f_dom n" *)
 fun time_dom_tac ctxt induct_rule domintros =
-  let
-    val dom_ctxt = List.foldr (fn (d,ctxt) => Simplifier.add_simp d ctxt) ctxt domintros
-  in
-    FIRST' [
-      (Induction.induction_tac ctxt true [] [[]] [] (SOME [induct_rule]) []
-        THEN_ALL_NEW ((K (auto_tac ctxt)) THEN' (fn i => FIRST' (
-        (if i <= length domintros then [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt [List.nth (domintros, i-1)]] else []) @
-        [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros]) i)))
-    ]
-  end
+  (Induction.induction_tac ctxt true [] [[]] [] (SOME [induct_rule]) []
+    THEN_ALL_NEW ((K (auto_tac ctxt)) THEN' (fn i => FIRST' (
+    (if i <= length domintros then [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt [List.nth (domintros, i-1)]] else []) @
+    [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros]) i)))
 
 (*
   
