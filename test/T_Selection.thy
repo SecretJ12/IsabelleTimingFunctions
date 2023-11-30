@@ -15,8 +15,8 @@ define_time_fun chop
 text \<open>partition3 is partial as filter is partial\<close>
 define_time_fun slow_select
 text \<open>slow_median needs T_List as length cannot be converted correctly otherwise\<close>
-define_time_0 length
-define_time_fun slow_median
+define_time_0 length (* is wrong, got corrected *)
+define_time_fun slow_median 
 
 declare [[time_prefix = "T''_"]]
 text \<open>mom_select uses a lambda through map\<close>

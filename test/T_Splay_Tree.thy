@@ -1,11 +1,11 @@
 theory T_Splay_Tree
-  imports "../src/TimingFunction" "afp/Splay_Tree" "afp/Splay_Tree_Analysis_Base"
+  imports "../src/TimingFunction" "Splay_Tree.Splay_Tree" "Amortized_Complexity.Splay_Tree_Analysis_Base"
 begin
 
 declare [[time_prefix = "T'_"]]
 
 text \<open>Define timing function\<close>
-text \<open>splay contains functions with conditions\<close>
+text \<open>splay contains functions with conditions\<close> (* TODO use lemma for terms *)
 define_time_fun splay_max
 text \<open>insert uses splay\<close>
 text \<open>delete uses splay\<close>

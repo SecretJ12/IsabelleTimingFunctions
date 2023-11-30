@@ -6,7 +6,7 @@ declare [[time_prefix = "T'_"]]
 
 
 text \<open>Define timing function\<close>
-define_time_0 node
+define_time_0 node (* TODO *)
 define_time_fun merge
 define_time_fun insert
 define_time_fun del_min

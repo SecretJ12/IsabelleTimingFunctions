@@ -8,8 +8,8 @@ fun length :: "'a list \<Rightarrow> nat" where
 
 declare [[time_prefix = "T'_"]]
 define_time_fun length
-text \<open>map is partial\<close>
-text \<open>filter is partial\<close>
+text \<open>map is partial\<close> (* TODO *)
+text \<open>filter is partial\<close> (* TODO *)
 define_time_fun take
 define_time_fun drop
 

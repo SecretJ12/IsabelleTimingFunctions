@@ -7,7 +7,7 @@ declare [[time_prefix = "T'_"]]
 text \<open>Define timing function\<close>
 define_time_fun norm
 define_time_fun enq
-define_time_0 tl
+define_time_0 tl (* TODO *)
 define_time_fun deq
 define_time_fun first
 define_time_fun is_empty
