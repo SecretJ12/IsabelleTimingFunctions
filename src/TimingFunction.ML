@@ -15,8 +15,8 @@ val fun_pretty':  Proof.context -> pfunc -> Pretty.T
 val fun_pretty:  Proof.context -> Function.info -> Pretty.T
 val print_timing':  Proof.context -> pfunc -> pfunc -> unit
 val print_timing:  Proof.context -> Function.info -> Function.info -> unit
-val reg_time_func: theory -> term -> 'a converter -> (local_theory -> term -> 'a -> term) -> bool -> Function.info * theory
-val reg_time_func_cmd: string -> 'a converter -> (local_theory -> term -> 'a -> term) -> theory -> theory
+val reg_time_func: theory -> term -> term list -> 'a converter -> (local_theory -> term -> 'a -> term) -> bool -> Function.info * theory
+val reg_time_func_cmd: (string * (Facts.ref * Token.src list) list option) -> 'a converter -> (local_theory -> term -> 'a -> term) -> theory -> theory
 
 val time_dom_tac: Proof.context -> thm -> thm list -> int -> tactic
 
@@ -332,12 +332,15 @@ fun time_dom_tac ctxt induct_rule domintros =
     (if i <= length domintros then [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt [List.nth (domintros, i-1)]] else []) @
     [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros]) i)))
 
-(*
-  
-*)
+
+fun get_terms lthy (term: term) =
+  Spec_Rules.retrieve_global lthy term
+      |> hd
+      |> #rules
+      |> map Thm.prop_of
 
 (* MAIN Convert given function into a timing function *)
-fun reg_time_func (theory: theory) (term: term) conv topConv  print =
+fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv  print =
   let
     val lthy = Named_Target.theory_init theory
     val _ =
@@ -346,10 +349,6 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
          | NONE => ()
 
     val info = SOME (Function.get_info lthy term) handle Empty => NONE
-    val terms = Spec_Rules.retrieve lthy term
-                |> hd
-                |> #rules
-                |> map Thm.prop_of
     val is_partial = case info of SOME {is_partial, ...} => is_partial | _ => false
 
     (* 1. Fix all terms *)
@@ -361,7 +360,7 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
       | unique (x::xs) = x::List.filter (fn x' => x <> x') xs
     val missing_funcs = find_missing lthy term (map right_of_equation terms) |> unique
     val theory = Local_Theory.exit_global lthy
-    val theory = List.foldr (fn (f, ctxt) => reg_time_func ctxt f conv topConv print |> snd) theory missing_funcs
+    val theory = List.foldr (fn (f, ctxt) => reg_time_func ctxt f (get_terms ctxt f) conv topConv print |> snd) theory missing_funcs
     val lthy = Named_Target.theory_init theory
     
     (* 3. Convert every equation
@@ -437,9 +436,7 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
       |> Config.put show_question_marks false
       |> Config.put show_sorts false (* Change it for debugging *)
     (* Print result if print *)
-    val _ = if not print then () else case info of
-        SOME info => print_timing print_ctxt info time_info
-      | NONE =>
+    val _ = if not print then () else
         let
           val (nm,T) = case term of Const t => t | _ => error "Invalid term"
         in
@@ -450,15 +447,21 @@ fun reg_time_func (theory: theory) (term: term) conv topConv  print =
   end;
 
 (* Convert function into its timing function (called by command) *)
-fun reg_time_func_cmd func conv topConv (theory: theory) =
+fun reg_time_func_cmd (func, thms) conv topConv (theory: theory) =
 let
-  val fterm = Syntax.read_term (Proof_Context.init_global theory) func
-  val (_, theory') = reg_time_func theory fterm conv topConv true
+  val ctxt = Proof_Context.init_global theory
+  val fterm = Syntax.read_term ctxt func
+  val (_, theory') = reg_time_func theory fterm
+    (case thms of NONE => get_terms theory fterm
+                | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
+    conv topConv true
 in theory'
 end;
 
 val _ = Outer_Syntax.command @{command_keyword "define_time_fun"}
   "Defines runtime function of a function"
-  (Parse.prop >> (fn func => Toplevel.theory (reg_time_func_cmd func converter top_converter)));
+  (Parse.prop -- (Scan.option (Parse.keyword_improper "with" -- Parse.thms1 >> snd))
+    >> (fn p => Toplevel.theory (reg_time_func_cmd p converter top_converter)));
+
 
 end
