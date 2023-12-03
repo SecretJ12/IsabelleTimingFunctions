@@ -197,4 +197,11 @@ fun first :: "'a * 'b \<Rightarrow> 'a" where
     (let (a,b) = dummy pair in dummy a)"
 define_time_fun first
 
+fun comp :: "nat \<Rightarrow> nat" where
+  "comp n = (n*5 div 7+1)*0"
+lemma comp_simp: "comp n = 0" by simp
+
+text \<open>Should take thm terms as argument for function terms\<close>
+define_time_fun comp with comp_simp
+
 end
