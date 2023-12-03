@@ -15,8 +15,8 @@ val fun_pretty':  Proof.context -> pfunc -> Pretty.T
 val fun_pretty:  Proof.context -> Function.info -> Pretty.T
 val print_timing':  Proof.context -> pfunc -> pfunc -> unit
 val print_timing:  Proof.context -> Function.info -> Function.info -> unit
-val reg_time_func: theory -> term -> term list -> 'a converter -> (local_theory -> term -> 'a -> term) -> bool -> Function.info * theory
-val reg_time_func_cmd: (string * (Facts.ref * Token.src list) list option) -> 'a converter -> (local_theory -> term -> 'a -> term) -> theory -> theory
+val reg_time_func: theory -> term -> term list -> 'a converter -> (bool -> local_theory -> term -> 'a -> term) -> bool -> Function.info * theory
+val reg_time_func_cmd: (string * (Facts.ref * Token.src list) list option) -> 'a converter -> (bool -> local_theory -> term -> 'a -> term) -> theory -> theory
 
 val time_dom_tac: Proof.context -> thm -> thm list -> int -> tactic
 
@@ -107,6 +107,9 @@ fun count_args (Type (n, [_,res])) = (if n = "fun" then 1 + count_args res else 
 fun check_args s (Const (_,T), args) =
     (if length args = count_args T then () else error ("Partial applications/Lambdas not allowed (" ^ s ^ ")"))
   | check_args s _ = error ("Partial applications/Lambdas not allowed (" ^ s ^ ")")
+(* Removes Abs *)
+fun rem_abs f (Abs (_,_,t)) = rem_abs f t
+  | rem_abs f t = f t
 
 fun time_term ctxt (Const (nm,T)) =
 let
@@ -207,6 +210,18 @@ fun fixPartTerms ctxt term (pT $ (eq $ l $ r)) =
   end
   | fixPartTerms _ term _ = error ("Invalid term to fix: " ^ (term |> dest_Const |> fst))
 
+(* 1.5 Check if function is recursive *)
+fun or f (a,b) = f a orelse b
+fun find_rec ctxt term (_ $ (_ $ _ $ r)) = walk ctxt term {
+          funcc = (fn _ => fn _ => fn f => fn t => fn args => (Term.term_name t = Term.term_name term) orelse List.foldr (or f) false args),
+          constc = (K o K o K o K) false,
+          ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn tt => fn tf => f cond orelse f tt orelse f tf),
+          casec = (fn _ => fn _ => fn f => fn t => fn cs => f t orelse List.foldr (or (rem_abs f)) false cs),
+          letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp orelse f t)
+      } r
+  | find_rec _ _ _ = false
+fun is_rec ctxt term = List.foldr (or (find_rec ctxt term)) false
+
 (* 2. Check for undefined timing functions *)
 fun right_of_equation (_ $ (_ $ _ $ r)) = r
   | right_of_equation _ = error "Invalid equation"
@@ -222,15 +237,13 @@ in
 end
   | check_fun _ _ _ _ _ = error "Invalid function"
 (* Returns list of all functions with undefined timing functions *)
-fun casecMisAbs f (Abs (_,_,t)) = casecMisAbs f t
-  | casecMisAbs f t = f t
 fun find_missing ctxt term terms =
   List.foldr (List.@) []
     (map (walk ctxt term {
         funcc = check_fun,
         constc = ((K o K o K o K) []),
         ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn t => fn r => f cond @ f t @ f r),
-        casec = (fn _ => fn _ => fn f => fn t => fn args => f t @ List.foldr (fn (t,fs) => casecMisAbs f t @ fs) [] args),
+        casec = (fn _ => fn _ => fn f => fn t => fn args => f t @ List.foldr (fn (t,fs) => rem_abs f t @ fs) [] args),
         letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp @ f t)
     }) terms)
 
@@ -311,7 +324,7 @@ val converter : term option converter = {
         casec = casec,
         letc = letc
     }
-fun top_converter _ _ = opt_term o (plus (SOME one))
+fun top_converter is_rec _ _ = opt_term o (plus (if is_rec then SOME one else NONE))
 
 (* Use converter to convert right side of a term *)
 fun to_time ctxt origin converter top_converter term = 
@@ -355,6 +368,9 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
     (* Exchange Var in types and terms to Free *)
     val terms = map (map_aterms fixTerms #> map_types (map_atyps fixTypes) #> fixPartTerms lthy term) terms
 
+    (* 1.5 Check if function is recursive *)
+    val is_rec = is_rec lthy term terms
+
     (* 2. Find missing functions and define them *)
     fun unique [] = []
       | unique (x::xs) = x::List.filter (fn x' => x <> x') xs
@@ -368,7 +384,7 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
       - On left side change name of function to timing function
       - Convert right side of equation with conversion schema
     *)
-    val timing_terms = map (convert_term lthy term conv topConv) terms
+    val timing_terms = map (convert_term lthy term conv (topConv is_rec)) terms
 
     (* 4. Register function and prove termination *)
     val name = Term.term_name term

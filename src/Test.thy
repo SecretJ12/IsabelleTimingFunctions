@@ -75,7 +75,7 @@ define_time_fun Itrev'
 value "T_Itrev' [a, b, c]"
 lemma T_itrev': "T_itrev' xs ys = 1 + length xs"
   by (induction xs arbitrary: ys) auto
-lemma "T_Itrev' xs = 2 + length xs"
+lemma "T_Itrev' xs = 1 + length xs"
   by (simp add: T_itrev')
 
 text \<open>If conditions should be handled accordingly\<close>
@@ -135,18 +135,10 @@ text \<open>The command should handle case expressions\<close>
 fun default :: "'a option \<Rightarrow> 'a \<Rightarrow> 'a" where
   "default opt d = (case opt of None \<Rightarrow> d | Some v \<Rightarrow> v)"
 fun t_default :: "'a option \<Rightarrow> 'a \<Rightarrow> nat" where
-  "t_default opt d = 1"
+  "t_default opt d = 0"
 define_time_fun default
 lemma "T_default opt d = t_default opt d"
   by auto
-
-fun default' :: "'a option \<Rightarrow> 'a \<Rightarrow> 'a" where
-  "default' opt d = (case opt of None \<Rightarrow> d | Some v \<Rightarrow> v)"
-fun t_default' :: "'a option \<Rightarrow> 'a \<Rightarrow> nat" where
-  "t_default' opt d = 1"
-define_time_fun default'
-lemma "T_default' opt d = t_default' opt d"
-  by (auto split: option.split)
 
 fun caseAdd :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
   "caseAdd a b = (case a of 0 \<Rightarrow> b | Suc a' \<Rightarrow> Suc (caseAdd a' b))"
@@ -203,5 +195,11 @@ lemma comp_simp: "comp n = 0" by simp
 
 text \<open>Should take thm terms as argument for function terms\<close>
 define_time_fun comp with comp_simp
+
+text \<open>Non recursive function should be without cost for calling the function\<close>
+fun divide :: "nat \<Rightarrow> nat \<Rightarrow> nat" where "divide a b = a div b"
+define_time_fun divide
+lemma "T_divide a b = 0"
+  by simp
 
 end
