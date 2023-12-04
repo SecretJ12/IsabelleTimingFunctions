@@ -110,6 +110,18 @@ fun check_args s (Const (_,T), args) =
 (* Removes Abs *)
 fun rem_abs f (Abs (_,_,t)) = rem_abs f t
   | rem_abs f t = f t
+(* Map right side of equation *)
+fun map_r f (pT $ (eq $ l $ r)) = (pT $ (eq $ l $ f r))
+  | map_r _ _ = error "Invalid function term"
+(* Get left side of equation *)
+fun get_l (_ $ (_ $ l $ _)) = l
+  | get_l _ = error "Invalid function term"
+(* Get right side of equation *)
+fun get_r (_ $ (_ $ _ $ r)) = r
+  | get_r _ = error "Invalid function term"
+(* Return name of Const *)
+fun Const_name (Const (nm,_)) = nm
+  | Const_name _ = error "Not a Const"
 
 fun time_term ctxt (Const (nm,T)) =
 let
@@ -188,11 +200,11 @@ fun fixCasec ctxt _ f (t as Const (n,T)) args =
       (check_args "cases" (Syntax.read_term ctxt n,args); build_func (t,fixCasecCases ctxt f T args))
   | fixCasec _ _ _ _ _ = error "Invalid case term"
 
-fun fixPartTerms ctxt term (pT $ (eq $ l $ r)) =
+fun fixPartTerms ctxt term t =
   let
-    val _ = check_args "args" (walk_func l [])
+    val _ = check_args "args" (walk_func (get_l t) [])
   in
-    pT $ (eq $ l $ (walk ctxt term {
+    map_r (walk ctxt term {
           funcc = (fn _ => fn _ => fn f => fn t => fn args =>
               (check_args "func" (t,args); build_func (t, map f args))),
           constc = (fn _ => fn _ => fn _ => fn c => c),
@@ -206,25 +218,21 @@ fun fixPartTerms ctxt term (pT $ (eq $ l $ r)) =
                 else f t
               in
               (Const ("HOL.Let",expT) $ (f exp) $ build_abs f' nms Ts) end)
-      } r))
+      }) t
   end
-  | fixPartTerms _ term _ = error ("Invalid term to fix: " ^ (term |> dest_Const |> fst))
 
 (* 1.5 Check if function is recursive *)
 fun or f (a,b) = f a orelse b
-fun find_rec ctxt term (_ $ (_ $ _ $ r)) = walk ctxt term {
-          funcc = (fn _ => fn _ => fn f => fn t => fn args => (Term.term_name t = Term.term_name term) orelse List.foldr (or f) false args),
+fun find_rec ctxt term = (walk ctxt term {
+          funcc = (fn _ => fn _ => fn f => fn t => fn args => (Const_name t = Const_name term) orelse List.foldr (or f) false args),
           constc = (K o K o K o K) false,
           ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn tt => fn tf => f cond orelse f tt orelse f tf),
           casec = (fn _ => fn _ => fn f => fn t => fn cs => f t orelse List.foldr (or (rem_abs f)) false cs),
           letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp orelse f t)
-      } r
-  | find_rec _ _ _ = false
+      }) o get_r
 fun is_rec ctxt term = List.foldr (or (find_rec ctxt term)) false
 
 (* 2. Check for undefined timing functions *)
-fun right_of_equation (_ $ (_ $ _ $ r)) = r
-  | right_of_equation _ = error "Invalid equation"
 (* Returns list of all function without a defined timing function *)
 fun check_fun ctxt origin f (func as Const (nm,T)) args =
 let
@@ -348,8 +356,7 @@ fun time_dom_tac ctxt induct_rule domintros =
 
 fun get_terms lthy (term: term) =
   Spec_Rules.retrieve_global lthy term
-      |> hd
-      |> #rules
+      |> hd |> #rules
       |> map Thm.prop_of
 
 (* MAIN Convert given function into a timing function *)
@@ -374,7 +381,7 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
     (* 2. Find missing functions and define them *)
     fun unique [] = []
       | unique (x::xs) = x::List.filter (fn x' => x <> x') xs
-    val missing_funcs = find_missing lthy term (map right_of_equation terms) |> unique
+    val missing_funcs = find_missing lthy term (map get_r terms) |> unique
     val theory = Local_Theory.exit_global lthy
     val theory = List.foldr (fn (f, ctxt) => reg_time_func ctxt f (get_terms ctxt f) conv topConv print |> snd) theory missing_funcs
     val lthy = Named_Target.theory_init theory
@@ -425,8 +432,10 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
           fun args (a$(Free (nm,T))) = args a |> (fn ar => (nm,T)::ar)
             | args (a$(Const (_,T))) = args a |> (fn ar => ("x",T)::ar)
             | args _ = []
-          val dom_args = map fst (case terms of ((_ $ (_ $ l $ _))::_) => (Variable.variant_frees lthy' [] (args l))
-                                      | _ => error "Invalid function")
+          val dom_args =
+            terms |> hd |> get_l |> args
+            |> Variable.variant_frees lthy' []
+            |> map fst
 
           val {inducts, ...} = case info of SOME i => i | _ => error "No inducts available"
           val induct = (Option.valOf inducts |> hd)
@@ -440,9 +449,9 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
             (fn {context, ...} => HEADGOAL (time_dom_tac context induct domintros))
           (* Add dom_lemma to simplification set *)
           val simp_lthy = Simplifier.add_simp dom_lemma lthy'
-      
-          (* Use lemma to prove termination *)
+
         in
+          (* Use lemma to prove termination *)
           Function.prove_termination NONE
             (auto_tac simp_lthy) lthy'
         end
@@ -476,7 +485,7 @@ end;
 
 val _ = Outer_Syntax.command @{command_keyword "define_time_fun"}
   "Defines runtime function of a function"
-  (Parse.prop -- (Scan.option (Parse.keyword_improper "with" -- Parse.thms1 >> snd))
+  (Parse.prop -- (Scan.option (Parse.keyword_improper "terms" -- Parse.thms1 >> snd))
     >> (fn p => Toplevel.theory (reg_time_func_cmd p converter top_converter)));
 
 
