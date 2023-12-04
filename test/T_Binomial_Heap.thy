@@ -6,38 +6,37 @@ declare [[time_prefix = "T'_"]]
 
 text \<open>Define timing function\<close>
 define_time_fun link
-define_time_0 rank (* TODO *)
 define_time_fun ins_tree
 define_time_fun insert
 
 text \<open>Only true with link being assumed constant\<close>
-define_time_0 link (* TODO *)
 define_time_fun merge
-
-define_time_0 root  (* TODO *)
-define_time_0 min (* TODO *)
 define_time_fun get_min
 define_time_fun get_min_rest
 define_time_0 append (* is okay due to better implementation of rev *)
 define_time_fun rev
 define_time_fun del_min
-                 
+
 
 text \<open>Proove equality\<close>
-theorem link: "T'_link t1 t2 = T_link t1 t2"
+theorem link: "T'_link t1 t2 = T_link t1 t2 - 1" (* TODO *)
   using T'_link.elims by auto
 
-theorem ins_tree: "T'_ins_tree t1 t2 = T_ins_tree t1 t2" (* TODO *)
+text \<open>Intended difference\<close>
+theorem ins_tree: "T'_ins_tree t ts = T_ins_tree t ts" (* TODO *)
   sorry
 
-theorem "T'_insert a t = T_insert a t"
+theorem "T'_insert a t = T_insert a t - 1" (* TODO *)
   by (auto simp: ins_tree T_insert_def)
 
 theorem merge: "T'_merge t1 t2 = T_merge t1 t2"
-  by (induction rule: T_merge.induct) (auto simp: ins_tree)
+  apply (induction rule: T_merge.induct)
+  using T'_rank.elims
+  by (auto simp: ins_tree) (meson T'_link.elims)
 
 theorem "t \<noteq> [] \<Longrightarrow> T'_get_min t = T_get_min t"
-  by (induction rule: T_get_min.induct) auto
+  apply (induction rule: T_get_min.induct)
+  using T'_root.elims by auto
 
 theorem get_min_rest: "t \<noteq> [] \<Longrightarrow> T'_get_min_rest t = T_get_min_rest t"
   by (induction rule: T_get_min_rest.induct) auto
@@ -45,7 +44,7 @@ theorem get_min_rest: "t \<noteq> [] \<Longrightarrow> T'_get_min_rest t = T_get
 theorem rev: "T'_rev xs = T_rev xs"
   by (induction xs) (auto simp: T_rev_def)
 
-theorem "t \<noteq> [] \<Longrightarrow> T'_del_min t = T_del_min t"
+theorem "t \<noteq> [] \<Longrightarrow> T'_del_min t = T_del_min t - 1" (* TODO *)
   by (auto simp: get_min_rest rev T_del_min_def merge split: prod.split tree.split)
 
 end

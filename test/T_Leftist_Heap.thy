@@ -6,17 +6,21 @@ declare [[time_prefix = "T'_"]]
 
 
 text \<open>Define timing function\<close>
-define_time_0 node (* TODO *)
 define_time_fun merge
 define_time_fun insert
 define_time_fun del_min
 
 text \<open>Proove equality\<close>
+lemma mht: "T'_mht r = 0"
+  using T'_mht.elims by auto
+lemma node: "T'_node l a r = 0"
+  by (auto simp: mht)
+
 theorem merge: "T'_merge x y = T_merge x y"
-  by (induction rule: T_merge.induct) auto
-theorem "T'_insert x y = T_insert x y + 1"
+  by (induction rule: T_merge.induct) (auto simp: node mht)
+theorem "T'_insert x y = T_insert x y"
   by (auto simp: merge T_insert_def)
-theorem "T'_del_min t  = T_del_min t + 1"
+theorem "T'_del_min t  = T_del_min t"
   by (cases t) (auto simp: merge)
 
 end

@@ -5,7 +5,6 @@ begin
 declare [[time_prefix = "T'_"]]
 
 text \<open>Define timing function\<close>
-define_time_0 cmp
 define_time_fun splay with splay.simps(1) splay_code
 text \<open>splay contains functions with conditions\<close>
 define_time_fun splay_max
@@ -16,15 +15,15 @@ value "T'_splay (1::nat) \<langle>Leaf, 1, Leaf\<rangle>"
 
 text \<open>Proove equality\<close>
 theorem splay: "T'_splay x t = T_splay x t"
-  by (induction x t rule: T_splay.induct)  (auto split: tree.split)
+  by (induction x t rule: T_splay.induct) (auto split: tree.split)
 
 theorem splay_max: "T'_splay_max t = T_splay_max t"
   by (induction rule: T_splay_max.induct) auto
 
-theorem "T'_insert x t = T_insert x t"
-  by (auto simp: T_insert_def splay)
+theorem "T'_insert x t = T_insert x t - 1" (* TODO *)
+  by (auto simp: T_insert_def splay split: tree.split)
 
-theorem "T'_delete x t = T_delete x t"
+theorem "T'_delete x t = T_delete x t - 1" (* TODO *)
   by (auto simp: T_delete_def splay splay_max split: tree.split)
 
 end

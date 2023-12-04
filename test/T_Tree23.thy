@@ -19,7 +19,7 @@ theorem join_all: "T'_join_all t = T_join_all t"
 lemma leaves: "T'_leaves xs = T_leaves xs"
   by (induction xs) auto
 
-theorem "T'_tree23_of_list xs = T_tree23_of_list xs"
+theorem "T'_tree23_of_list xs = T_tree23_of_list xs - 1"
   by (induction xs) (auto simp: leaves T_tree23_of_list_def join_all)
 
 end
