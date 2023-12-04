@@ -8,8 +8,8 @@ fun length :: "'a list \<Rightarrow> nat" where
 
 declare [[time_prefix = "T'_"]]
 define_time_fun length
-text \<open>map is partial\<close> (* TODO *)
-text \<open>filter is partial\<close> (* TODO *)
+define_time_fun map
+define_time_fun filter
 define_time_fun take
 define_time_fun drop
 
@@ -20,6 +20,10 @@ fun td_schema :: "nat \<Rightarrow> 'a list \<Rightarrow> 'a list" where
 
 lemma "T'_length xs = T_length xs"
   by (induction xs) (auto simp: T_length.simps)
+lemma "T'_map (f,T_f) xs = T_map T_f xs"
+  by (induction xs) (auto simp: T_map.simps)
+lemma "T'_filter (f,T_f) xs = T_filter T_f xs"
+  by (induction xs) (auto simp: T_filter.simps)
 lemma "T'_take n xs = T_take n xs"
   by (induction n xs rule: td_schema.induct) auto
 lemma "T'_drop n xs = T_drop n xs"

@@ -194,12 +194,45 @@ fun comp :: "nat \<Rightarrow> nat" where
 lemma comp_simp: "comp n = 0" by simp
 
 text \<open>Should take thm terms as argument for function terms\<close>
-define_time_fun comp with comp_simp
+define_time_fun comp terms comp_simp
 
 text \<open>Non recursive function should be without cost for calling the function\<close>
 fun divide :: "nat \<Rightarrow> nat \<Rightarrow> nat" where "divide a b = a div b"
 define_time_fun divide
 lemma "T_divide a b = 0"
   by simp
+
+text \<open>Should be able to translate functions with function as argument\<close>
+fun t_map :: "(('a \<Rightarrow> 'b) * ('a \<Rightarrow> nat)) \<Rightarrow> 'a list \<Rightarrow> nat" where
+  "t_map (p,p_f) [] = 1"
+| "t_map (p,p_f) (x#xs) = 1 + p_f x + t_map (p,p_f) xs"
+define_time_fun map
+fun leng :: "'a list \<Rightarrow> nat" where
+  "leng [] = 0" | "leng (x#xs) = Suc (leng xs)"
+define_time_fun leng
+lemma leng: "T_leng xs = Suc (length xs)"
+  by (induction xs) auto
+lemma "T_map (leng,T_leng) xs = Suc (length xs) + length xs + foldr ((+) o length) xs 0"
+  by (induction xs) (auto simp: leng)
+lemma "T_map (leng,T_leng) xs = t_map (leng,T_leng) xs"
+  by (induction xs) auto
+
+text \<open>Functions with function should be called correctly\<close>
+fun is_zero :: "nat \<Rightarrow> bool" where "is_zero 0 = True" | "is_zero _ = False"
+fun find_zero :: "nat list \<Rightarrow> nat list" where
+  "find_zero xs = filter is_zero xs"
+define_time_fun find_zero
+fun t_is_zero :: "nat \<Rightarrow> nat" where
+  "t_is_zero n = 0"
+fun t_filter :: "(('a \<Rightarrow> bool) * ('a \<Rightarrow> nat)) \<Rightarrow> 'a list \<Rightarrow> nat" where
+  "t_filter _ [] = 1"
+| "t_filter (p,t_p) (x#xs) = 1 + t_filter (p,t_p) xs + t_p x"
+lemma filter: "t_filter (p,t_p) xs = T_filter (p,t_p) xs"
+  by (induction xs) auto
+fun t_find_zero :: "nat list \<Rightarrow> nat" where
+  "t_find_zero xs = t_filter (is_zero,t_is_zero) xs"
+lemma "t_find_zero xs = T_find_zero xs"
+  apply (induction xs)
+  using T_is_zero.elims by (auto simp: filter)
 
 end

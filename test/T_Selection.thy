@@ -12,7 +12,7 @@ define_time_fun size
 
 text \<open>Transformation of the functions\<close>
 define_time_fun chop
-text \<open>partition3 is partial as filter is partial\<close>
+text \<open>partition3 uses lambda\<close>
 define_time_fun slow_select
 text \<open>slow_median needs T_List as length cannot be converted correctly otherwise\<close>
 define_time_0 length (* is wrong, got corrected *)

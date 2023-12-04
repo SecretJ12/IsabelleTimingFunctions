@@ -86,9 +86,12 @@ fun is_case (Const (n,_)) = String.isPrefix "case_" (List.last (String.fields (f
 (* returns true if it's a let term *)
 fun is_let (Const (n,_)) = (n = "HOL.Let")
   | is_let _ = false
-(* change type of original function to new type (_ \<Rightarrow> ... \<Rightarrow> _ to _ \<Rightarrow> ... \<Rightarrow> nat) *)
-fun change_typ (Type (n, [T1, T2])) = (if n = "fun" then Type (n, [T1, change_typ T2]) else natTyp)
+(* change type of original function to new type (_ \<Rightarrow> ... \<Rightarrow> _ to _ \<Rightarrow> ... \<Rightarrow> nat)
+    and replace all function arguments f with (t*T_f) *)
+fun change_typ (Type ("fun", [T1, T2])) = Type ("fun", [check_for_fun T1, change_typ T2])
   | change_typ _ = natTyp
+and check_for_fun (f as Type ("fun", [_,_])) = Type ("Product_Type.prod", [f, change_typ f])
+  | check_for_fun f = f
 (* Convert string name of function to its timing equivalent *)
 fun fun_name_to_time ctxt name =
 let
@@ -106,6 +109,8 @@ fun count_args (Type (n, [_,res])) = (if n = "fun" then 1 + count_args res else 
 (* Check if number of arguments matches function *)
 fun check_args s (Const (_,T), args) =
     (if length args = count_args T then () else error ("Partial applications/Lambdas not allowed (" ^ s ^ ")"))
+  | check_args s (Free (_,T), args) =
+    (if length args = count_args T then () else error ("Partial applications/Lambdas not allowed (" ^ s ^ ")"))
   | check_args s _ = error ("Partial applications/Lambdas not allowed (" ^ s ^ ")")
 (* Removes Abs *)
 fun rem_abs f (Abs (_,_,t)) = rem_abs f t
@@ -120,8 +125,8 @@ fun get_l (_ $ (_ $ l $ _)) = l
 fun get_r (_ $ (_ $ _ $ r)) = r
   | get_r _ = error "Invalid function term"
 (* Return name of Const *)
-fun Const_name (Const (nm,_)) = nm
-  | Const_name _ = error "Not a Const"
+fun Const_name (Const (nm,_)) = SOME nm
+  | Const_name _ = NONE
 
 fun time_term ctxt (Const (nm,T)) =
 let
@@ -207,7 +212,7 @@ fun fixPartTerms ctxt term t =
     map_r (walk ctxt term {
           funcc = (fn _ => fn _ => fn f => fn t => fn args =>
               (check_args "func" (t,args); build_func (t, map f args))),
-          constc = (fn _ => fn _ => fn _ => fn c => c),
+          constc = (fn _ => fn _ => fn _ => fn c => (case c of Abs _ => error "No are lambdas allowed" | _ => c)),
           ifc = (fn _ => fn _ => fn f => fn T => fn cond => fn tt => fn tf =>
             ((Const ("HOL.If", T)) $ f cond $ (f tt) $ (f tf))),
           casec = fixCasec,
@@ -243,15 +248,17 @@ in
       case time_term ctxt func of SOME _ => f_args
                                 | NONE => func :: f_args
 end
+  | check_fun _ _ f (Free (_,_)) args =
+      List.foldr (List.@) [] (map f args)
   | check_fun _ _ _ _ _ = error "Invalid function"
 (* Returns list of all functions with undefined timing functions *)
 fun find_missing ctxt term terms =
   List.foldr (List.@) []
     (map (walk ctxt term {
         funcc = check_fun,
-        constc = ((K o K o K o K) []),
+        constc = (fn _ => fn _ => fn _ => fn c => (case c of (Const (_,Type ("fun",_))) => [c] | _ => [])),
         ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn t => fn r => f cond @ f t @ f r),
-        casec = (fn _ => fn _ => fn f => fn t => fn args => f t @ List.foldr (fn (t,fs) => rem_abs f t @ fs) [] args),
+        casec = (fn _ => fn _ => fn f => fn t => fn args => List.foldr (fn (t,fs) => rem_abs f t @ fs) [] args),
         letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp @ f t)
     }) terms)
 
@@ -264,7 +271,7 @@ fun plus (SOME a) (SOME b) = SOME (Const ("Groups.plus_class.plus", plusTyp) $ a
   | plus NONE NONE = NONE
 fun opt_term NONE = zero
   | opt_term (SOME t) = t
-
+fun time_name_of_free ctxt nm = (Config.get ctxt bprefix)^nm^"_"
 
 (* Converting of function term *)
 fun fun_to_time ctxt origin (func as Const (nm,T)) =
@@ -277,9 +284,26 @@ in
   if Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) (nm,T) then NONE else
     time_term ctxt func
 end
+  | fun_to_time ctxt _ (Free (nm,T)) =
+      SOME (Free (time_name_of_free ctxt nm,change_typ T))
   | fun_to_time _ _ _ = error "Invalid function to convert"
+
+(* Convert arguments of left side of a term *)
+fun conv_arg ctxt _ (f as Free (nm,T as Type("fun",_))) =
+  (Const ("Product_Type.Pair",
+      Type ("fun", [T,Type ("fun",[change_typ T,Type ("Product_Type.prod",[T,change_typ T])])]))
+    $ f $ Free (time_name_of_free ctxt nm, change_typ T))
+  | conv_arg ctxt origin (f as Const (_,T as Type("fun",_))) =
+  (Const ("Product_Type.Pair",
+      Type ("fun", [T,Type ("fun",[change_typ T,Type ("Product_Type.prod",[T,change_typ T])])]))
+    $ f $ (fun_to_time ctxt origin f |> Option.valOf))
+  | conv_arg _ _ x = x
+fun conv_args ctxt origin = map (conv_arg ctxt origin)
+
 fun funcc ctxt origin f func args = List.foldr (I #-> plus)
-  (case fun_to_time ctxt origin func of SOME t => SOME (build_func (t,args)) | NONE => NONE) (map f args)
+  (case fun_to_time ctxt origin func of SOME t => SOME (build_func (t,conv_args ctxt origin args))
+                                      | NONE => NONE)
+  (map f args)
 
 (* Handle case terms *)
 fun casecIsCase (Type (n1, [_,Type (n2, _)])) = (n1 = "fun" andalso n2 = "fun")
@@ -342,7 +366,7 @@ fun to_time ctxt origin converter top_converter term =
 fun convert_term ctxt origin conv topConv (pT $ (Const (eqN, _) $ l $ r)) =
       pT
       $ (Const (eqN, @{typ "nat \<Rightarrow> nat \<Rightarrow> bool"})
-        $ (build_func ((walk_func l []) |>> (fun_to_time ctxt origin) |>> Option.valOf))
+        $ (build_func ((walk_func l []) |>> (fun_to_time ctxt origin) |>> Option.valOf ||> conv_args ctxt origin))
         $ (to_time ctxt origin conv topConv r))
   | convert_term _ _ _ _ _ = error "Invalid term to convert"
 
@@ -358,6 +382,7 @@ fun get_terms lthy (term: term) =
   Spec_Rules.retrieve_global lthy term
       |> hd |> #rules
       |> map Thm.prop_of
+   handle Empty => error "Function not found"
 
 (* MAIN Convert given function into a timing function *)
 fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv  print =
@@ -385,7 +410,7 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
     val theory = Local_Theory.exit_global lthy
     val theory = List.foldr (fn (f, ctxt) => reg_time_func ctxt f (get_terms ctxt f) conv topConv print |> snd) theory missing_funcs
     val lthy = Named_Target.theory_init theory
-    
+
     (* 3. Convert every equation
       - Change type of toplevel equation from _ \<Rightarrow> _ \<Rightarrow> bool to nat \<Rightarrow> nat \<Rightarrow> bool
       - On left side change name of function to timing function
@@ -403,10 +428,20 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
       Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
     val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) timing_terms
 
+    val print_ctxt = lthy
+      |> Config.put show_question_marks false
+      |> Config.put show_sorts false (* Change it for debugging *)
+    (* Print result if print *)
+    val _ = if not print then () else
+        let
+          val (nm,T) = case term of Const t => t | _ => error "Invalid term"
+        in
+          print_timing' print_ctxt { name=nm, terms=terms, typ=T } { name=timing_name, terms=timing_terms, typ=change_typ T }
+        end
+
     (* For partial functions sequential=true is needed in order to support them
        We need sequential=false to support the automatic proof of termination over dom
     *)
-
     (* Register function *)
     val (_, lthy) =
       Function.add_function bindings specs fun_config pat_completeness_auto lthy
@@ -421,7 +456,7 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
 
     (* Start proving the termination *)    
     val lthy' = Named_Target.theory_init (Local_Theory.exit_global lthy)
-  
+
     (* Proof by lexicographic_order_tac *)
     val (time_info, lthy'') =
       (Function.prove_termination NONE
