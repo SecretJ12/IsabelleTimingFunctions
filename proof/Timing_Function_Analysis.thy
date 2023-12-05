@@ -5,7 +5,10 @@ begin
 declare[[syntax_ambiguity_warning=false]]
 
 text \<open>Find better representation of val?\<close>
-typedecl val
+type_synonym val = nat
+
+definition false :: "val \<Rightarrow> bool" where "false v \<equiv> v = 0"
+definition true :: "val \<Rightarrow> bool" where "true v \<equiv> \<not> false v"
 
 type_synonym env = "val list"
 
@@ -23,18 +26,16 @@ type_synonym t_pApp = "(string \<Rightarrow> val list \<Rightarrow> val)"
 type_synonym defs = "string \<Rightarrow> exp"
 
 locale timing =
-  fixes val0 :: val
-   and  pApp :: t_pApp
-   and  true :: "val \<Rightarrow> bool"
+  fixes pApp :: t_pApp
+  assumes sum: "pApp ''sum'' es = sum_list es"
 begin
-definition false :: "val \<Rightarrow> bool" where "false v \<equiv> \<not> true v"
 
 inductive eval :: "env \<Rightarrow> defs \<Rightarrow> exp \<Rightarrow> val \<Rightarrow> bool" ("(_/ \<turnstile>_/ _/ \<rightarrow> _)") where
 Id:   "\<rho> \<turnstile>\<phi> i#i \<rightarrow> (\<rho> ! i)" |
 C:    "\<rho> \<turnstile>\<phi> c#v \<rightarrow> v" |
-F:    "length es = length vs \<Longrightarrow> (\<And>i. i < length vs \<Longrightarrow> \<rho> \<turnstile>\<phi> (es ! i) \<rightarrow> (vs ! i))
+F:    "length es = length vs \<Longrightarrow> (\<forall>i < length vs. \<rho> \<turnstile>\<phi> (es ! i) \<rightarrow> (vs ! i))
         \<Longrightarrow> \<phi> f = fe \<Longrightarrow> vs \<turnstile>\<phi> fe \<rightarrow> v \<Longrightarrow> \<rho> \<turnstile>\<phi> ($f: es) \<rightarrow> v" |
-P:    "length es = length vs \<Longrightarrow> (\<And>i. i < length es \<Longrightarrow> \<rho> \<turnstile>\<phi> (es ! i) \<rightarrow> (vs ! i))
+P:    "length es = length vs \<Longrightarrow> (\<forall>i < length es. \<rho> \<turnstile>\<phi> (es ! i) \<rightarrow> (vs ! i))
         \<Longrightarrow> pApp p vs = v \<Longrightarrow> \<rho> \<turnstile>\<phi> (p$p: es) \<rightarrow> v" |
 If1:  "\<rho> \<turnstile>\<phi> c \<rightarrow> v \<Longrightarrow> true v \<Longrightarrow> \<rho> \<turnstile>\<phi> t \<rightarrow> v \<Longrightarrow> \<rho> \<turnstile>\<phi> (IF c THEN t ELSE f) \<rightarrow> v" |
 If2:  "\<rho> \<turnstile>\<phi> c \<rightarrow> v \<Longrightarrow> false v \<Longrightarrow> \<rho> \<turnstile>\<phi> f \<rightarrow> v \<Longrightarrow> \<rho> \<turnstile>\<phi> (IF c THEN t ELSE f) \<rightarrow> v"
@@ -61,18 +62,14 @@ next
   then show ?case by (metis nth_equalityI PE)
 qed blast+
 
-fun sum_nat :: "nat list \<Rightarrow> nat" ("\<Sum> _") where
-  "sum_nat [] = 0"
-| "sum_nat (a#as) = a + sum_nat as"
-
 inductive eval_count :: "env \<Rightarrow> defs \<Rightarrow> exp \<Rightarrow> val * nat \<Rightarrow> bool" ("(_/ \<turnstile>_/ _/ \<rightarrow>s _)") where
 cId:   "\<rho> \<turnstile>\<phi> i#i \<rightarrow>s (\<rho>!i,0)" |
 cC:    "\<rho> \<turnstile>\<phi> c#v \<rightarrow>s (v,0)" |
 cF:    "length es = length vs \<Longrightarrow> length es = length ts
           \<Longrightarrow> (\<And>i. i < length vs \<Longrightarrow> \<rho> \<turnstile>\<phi> (es!i) \<rightarrow>s (vs!i,ts!i))
-          \<Longrightarrow> \<phi> f = fe \<Longrightarrow> vs \<turnstile>\<phi> fe \<rightarrow>s (v,t) \<Longrightarrow> \<rho> \<turnstile>\<phi> ($f: es) \<rightarrow>s (v,1+t+\<Sum>ts)" |
+          \<Longrightarrow> \<phi> f = fe \<Longrightarrow> vs \<turnstile>\<phi> fe \<rightarrow>s (v,t) \<Longrightarrow> \<rho> \<turnstile>\<phi> ($f: es) \<rightarrow>s (v,1+t+sum_list ts)" |
 cP:    "length es = length vs \<Longrightarrow> (\<And>i. i < length es \<Longrightarrow> \<rho> \<turnstile>\<phi> (es ! i) \<rightarrow>s (vs!i,ts!i))
-          \<Longrightarrow> pApp p vs = v \<Longrightarrow> \<rho> \<turnstile>\<phi> (p$p: es) \<rightarrow>s (v,\<Sum>ts)" |
+          \<Longrightarrow> pApp p vs = v \<Longrightarrow> \<rho> \<turnstile>\<phi> (p$p: es) \<rightarrow>s (v,sum_list ts)" |
 cIf1:  "\<rho> \<turnstile>\<phi> c \<rightarrow>s (v,tc) \<Longrightarrow> true v \<Longrightarrow> \<rho> \<turnstile>\<phi> t \<rightarrow>s (v,tt) \<Longrightarrow> \<rho> \<turnstile>\<phi> (IF c THEN t ELSE f) \<rightarrow>s (v,tc+tt)" |
 cIf2:  "\<rho> \<turnstile>\<phi> c \<rightarrow>s (v,tc) \<Longrightarrow> false v \<Longrightarrow> \<rho> \<turnstile>\<phi> f \<rightarrow>s (v,tf) \<Longrightarrow> \<rho> \<turnstile>\<phi> (IF c THEN t ELSE f) \<rightarrow>s (v,tc+tf)"
 
@@ -135,8 +132,50 @@ qed blast+
 lemma eval_count_eval: "\<rho> \<turnstile>\<phi> c \<rightarrow>s (v,t) \<Longrightarrow> \<rho> \<turnstile>\<phi> c \<rightarrow> v"
   by (induction \<rho> \<phi> c "(v,t)" arbitrary: v t rule: eval_count.induct) auto
 
-theorem  eval_eq_eval_count: "(\<rho> \<turnstile>\<phi> c \<rightarrow> v) \<longleftrightarrow> (\<exists>t. \<rho> \<turnstile>\<phi> c \<rightarrow>s (v,t))"
+lemma  eval_eq_eval_count: "(\<rho> \<turnstile>\<phi> c \<rightarrow> v) \<longleftrightarrow> (\<exists>t. \<rho> \<turnstile>\<phi> c \<rightarrow>s (v,t))"
   using eval_count_eval eval_eval_count by auto
+
+(* TODO: define T and proove:
+proposition "\<rho> \<turnstile>\<phi> e \<rightarrow>s (v,t) \<longleftrightarrow> \<rho> \<turnstile>\<phi> e \<rightarrow> v \<and> T \<Delta> = t"
+
+*)
+
+fun \<T> :: "exp \<Rightarrow> exp" where
+  "\<T> c#v = c#0"
+| "\<T> i#i = c#0"
+| "\<T> (IF c THEN t ELSE f) = p$''sum'': [\<T> c, IF c THEN \<T> t ELSE \<T> f]"
+| "\<T> (p$_: args) = p$''sum'': map \<T> args"
+| "\<T> ($f: args) = p$''sum'': ($f:args # map \<T> args)"
+                  
+definition c :: "defs \<Rightarrow> defs" where
+  "c \<phi> f = p$''sum'': [c#1, \<T> (\<phi> f)]"
+
+text \<open>Small example\<close>
+lemma add2: "\<rho> \<turnstile>\<phi> (p$''sum'': [c#n, c#m]) \<rightarrow> n+m"
+proof -
+  have 1: "\<rho> \<turnstile>\<phi> c#n \<rightarrow> n" by simp
+  have 2: "\<rho> \<turnstile>\<phi> c#m \<rightarrow> m" by simp
+
+  have len: "length [c#n,c#m] = length [n,m]" by simp
+  from 1 2 have li: "\<forall>i < length [n,m]. \<rho> \<turnstile>\<phi> ([c#n,c#m] ! i) \<rightarrow> ([n,m] ! i)"
+    by (simp add: nth_Cons')
+  have pApp: "pApp ''sum'' [n,m] = n+m" by (auto simp: sum)
+
+  from len li pApp P[of "[c#n,c#m]" "[n,m]" \<rho> \<phi> "''sum''" "n+m"]
+  show ?thesis by simp
+qed
+
+fun \<phi> :: "defs" where
+  "\<phi> s = c#0"
+
+lemma "\<rho> \<turnstile>\<phi> ($''callee'': []) \<rightarrow> 0"
+  by (rule F) auto
+
+lemma "\<rho> \<turnstile>(c \<phi>) ($''callee'': []) \<rightarrow> 1"
+  apply (rule F)
+  apply (auto simp: c_def)
+  using add2[of "[]" "c \<phi>" 1 0]
+  by simp
 
 end
 
