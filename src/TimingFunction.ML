@@ -428,17 +428,6 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
       Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
     val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) timing_terms
 
-    val print_ctxt = lthy
-      |> Config.put show_question_marks false
-      |> Config.put show_sorts false (* Change it for debugging *)
-    (* Print result if print *)
-    val _ = if not print then () else
-        let
-          val (nm,T) = case term of Const t => t | _ => error "Invalid term"
-        in
-          print_timing' print_ctxt { name=nm, terms=terms, typ=T } { name=timing_name, terms=timing_terms, typ=change_typ T }
-        end
-
     (* For partial functions sequential=true is needed in order to support them
        We need sequential=false to support the automatic proof of termination over dom
     *)
