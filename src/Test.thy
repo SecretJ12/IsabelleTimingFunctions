@@ -5,47 +5,21 @@ begin
 chapter \<open>Definition on example\<close>
 
 text \<open>The following function sums up all integers from 0 to n\<close>
-fun f :: "nat \<Rightarrow> nat" where
-  "f 0 = 0"
-| "f (Suc n) = Suc n + f n"
+fun sum :: "nat \<Rightarrow> nat" where
+  "sum 0 = 0"
+| "sum (Suc n) = Suc n + sum n"
 
 text \<open>It should be translated into the following timing function\<close>
-fun t_f :: "nat \<Rightarrow> nat" where
-  "t_f 0 = 1"
-| "t_f (Suc n) = t_f n + 1"
-
-text \<open>Hereby we run through the following steps:
-\<E>\<lbrakk>f 0 = 0\<rbrakk>
-= (T_f 0 = \<T>\<lbrakk>0] + 1)
-= (T_f 0 = 1 + 1)
-\<leadsto> (T_f 0 = 1)
-and
-\<E>\<lbrakk>f (Suc n) = Suc n + f n\<rbrakk>
-= (T_f (Suc n) = \<T>\<lbrakk>Suc n + f n\<rbrakk> + 1)
-= (T_f (Suc n) = 1 + \<T>\<lbrakk>Suc n\<rbrakk> + \<T>\<lbrakk>f n\<rbrakk> + 1)
-= (T_f (Suc n) = 1 + 1 + \<T>\<lbrakk>f n\<rbrakk> + 1)
-= (T_f (Suc n) = 1 + 1 + T_f n + \<T>\<lbrakk>1\<rbrakk> + 1)
-= (T_f (Suc n) = 1 + 1 + T_f n + 1 + 1)
-= (T_f (Suc n) = T_f n + 4)
-\<leadsto> (T_f (Suc n) = T_f n + 1)\<close>
+fun t_sum :: "nat \<Rightarrow> nat" where
+  "t_sum 0 = 1"
+| "t_sum (Suc n) = t_sum n + 1"
 
 text \<open>The same function should be generated with the following command\<close>
-define_time_fun f
-lemma "t_f n = T_f n"
+define_time_fun sum
+
+text \<open>Proof\<close>
+lemma "t_sum n = T_sum n"
   by (induction n) auto
-
-text \<open>Example proof (Conversion still TODO)\<close>
-lemma "T_f n = Suc n"
-  by (induction n) simp+
-
-text \<open>Also a non asymptotic version can be created\<close>
-fun g :: "nat \<Rightarrow> nat" where
-  "g 0 = 0"
-| "g (Suc n) = Suc n + g n"
-define_time_fun g
-
-lemma "T_g x = 1 + x"
-  by (induction x) auto
 
 text \<open>The command should work for all input types\<close>
 fun len :: "'a list \<Rightarrow> nat" where
@@ -235,4 +209,16 @@ lemma "t_find_zero xs = T_find_zero xs"
   apply (induction xs)
   using T_is_zero.elims by (auto simp: filter)
 
+text \<open>More functions to test functions as arguments\<close>
+fun revmap' :: "('a \<Rightarrow> 'b) \<Rightarrow> 'a list \<Rightarrow> 'b list \<Rightarrow> 'b list" where
+  "revmap' f [] ys = ys"
+| "revmap' f (x#xs) ys = revmap' f xs (f x # ys)"
+fun revmap :: "('a \<Rightarrow> 'b) \<Rightarrow> 'a list \<Rightarrow> 'b list" where
+  "revmap f xs = revmap' f xs []"
+define_time_fun revmap
+lemma revmap': "T_revmap' (f,T_f) xs ys = Suc (length xs) + foldr ((+) o T_f) xs 0"
+  by (induction xs arbitrary: ys) auto
+lemma "T_revmap (f,T_f) xs = Suc (length xs) + foldr ((+) o T_f) xs 0"
+  by (simp add: revmap')
+  
 end

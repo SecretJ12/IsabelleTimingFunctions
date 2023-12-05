@@ -33,7 +33,7 @@ proof -
   with assms 3 2 show ?thesis by auto
 qed
 
-theorem "braun t \<Longrightarrow> T'_del_min t = T_del_min t - 1"
+theorem "braun t \<Longrightarrow> T'_del_min t = T_del_min t - 1" (* TODO *)
 proof (induction rule: T_del_min.induct)
   case (3 v va vb x r)
   with br[of r "fst (del_left \<langle>v, va, vb\<rangle>)"  "snd (del_left \<langle>v, va, vb\<rangle>)"]

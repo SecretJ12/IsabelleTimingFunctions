@@ -5,8 +5,8 @@ begin
 declare [[time_prefix = "T'_"]]
 
 text \<open>Define timing function\<close>
+text \<open>splay contains functions with conditions, instead use the proven code:\<close>
 define_time_fun splay terms splay.simps(1) splay_code
-text \<open>splay contains functions with conditions\<close>
 define_time_fun splay_max
 define_time_fun insert
 define_time_fun delete

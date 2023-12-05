@@ -22,7 +22,7 @@ declare [[time_prefix = "T''_"]]
 text \<open>mom_select uses a lambda through map\<close>
 
 text \<open>Proofs about equality\<close>
-theorem "T'_chop n xs = T_chop n xs"
+theorem "T'_chop n xs = T_chop n xs" (* TODO *)
   oops
 
 lemma insort1: "T'_insort1 x xs = T_insort1 x xs"
