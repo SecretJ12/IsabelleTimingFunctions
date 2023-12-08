@@ -258,7 +258,7 @@ fun find_missing ctxt term terms =
         funcc = check_fun,
         constc = (fn _ => fn _ => fn _ => fn c => (case c of (Const (_,Type ("fun",_))) => [c] | _ => [])),
         ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn t => fn r => f cond @ f t @ f r),
-        casec = (fn _ => fn _ => fn f => fn t => fn args => List.foldr (fn (t,fs) => rem_abs f t @ fs) [] args),
+        casec = (fn _ => fn _ => fn f => fn _ => fn args => List.foldr (fn (t,fs) => rem_abs f t @ fs) [] args),
         letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp @ f t)
     }) terms)
 
@@ -422,8 +422,6 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
     val name = Term.term_name term
     val timing_name = fun_name_to_time lthy name
     val bindings = [(Binding.name timing_name, NONE, NoSyn)]
-    val fun_config = Function_Common.FunctionConfig
-      {sequential=false, default=NONE, domintros=true, partials=is_partial}
     fun pat_completeness_auto ctxt =
       Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
     val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) timing_terms
@@ -431,17 +429,22 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
     (* For partial functions sequential=true is needed in order to support them
        We need sequential=false to support the automatic proof of termination over dom
     *)
-    (* Register function *)
-    val (_, lthy) =
-      Function.add_function bindings specs fun_config pat_completeness_auto lthy
-      handle _ =>
+    fun register seq =
       let
-        val _ = warning "Falling back on sequential function..."
+        val _ = (if seq then warning "Falling back on sequential function..." else ())
         val fun_config = Function_Common.FunctionConfig
-          {sequential=true, default=NONE, domintros=true, partials=is_partial}
+          {sequential=seq, default=NONE, domintros=true, partials=is_partial}
       in
         Function.add_function bindings specs fun_config pat_completeness_auto lthy
       end
+
+    (* Register function *)
+    val (_, lthy) =
+      register false
+      handle (ERROR _) =>
+        register true
+           | Match =>
+        register true
 
     (* Start proving the termination *)    
     val lthy' = Named_Target.theory_init (Local_Theory.exit_global lthy)
