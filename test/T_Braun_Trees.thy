@@ -4,7 +4,6 @@ begin
 
 declare [[time_prefix = "T'_"]]
 
-
 text \<open>Define timing function\<close>
 define_time_fun insert
 define_time_fun sift_down

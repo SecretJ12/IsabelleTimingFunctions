@@ -20,10 +20,10 @@ theorem splay: "T'_splay x t = T_splay x t"
 theorem splay_max: "T'_splay_max t = T_splay_max t"
   by (induction rule: T_splay_max.induct) auto
 
-theorem "T'_insert x t = T_insert x t - 1" (* TODO *)
+theorem "T'_insert x t = T_insert x t"
   by (auto simp: T_insert_def splay split: tree.split)
 
-theorem "T'_delete x t = T_delete x t - 1" (* TODO *)
+theorem "T'_delete x t = T_delete x t"
   by (auto simp: T_delete_def splay splay_max split: tree.split)
 
 end

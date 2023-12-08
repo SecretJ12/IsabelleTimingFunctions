@@ -16,21 +16,21 @@ text \<open>Proove equality\<close>
 lemma itrev: "T'_itrev xs ys = T_itrev xs ys"
   by (induction xs arbitrary: ys) auto
 
-theorem norm: "T'_norm q = T_norm q - 1" (* TODO *)
+theorem norm: "T'_norm q = T_norm q"
   by (cases q) (auto simp: itrev)
 
-theorem "T'_enq a q = T_enq a q - 2" (* TODO *)
+theorem "T'_enq a q = T_enq a q"
   apply (cases q)
   using T'_tl.elims by (auto simp: norm)
 
-theorem "T'_deq q = T_deq q - 2" (* TODO *)
+theorem "T'_deq q = T_deq q"
   apply (cases q)
   using T'_tl.elims by (auto simp: norm)
 
-theorem "0 < length fs \<Longrightarrow> T'_first (fs,rs) = T_first (fs,rs) - 1" (* TODO *)
+theorem "0 < length fs \<Longrightarrow> T'_first (fs,rs) = 0"
   by (cases fs) auto
 
-theorem "T'_is_empty q = T_is_empty q - 1" (* TODO *)
+theorem "T'_is_empty q = 0"
   by (cases q) auto
 
 end

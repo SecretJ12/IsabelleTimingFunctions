@@ -1,4 +1,4 @@
-theory T_Binomial_Heap
+theory T_Binomial_Heap    
   imports "../src/TimingFunction" "HOL-Data_Structures.Binomial_Heap"
 begin
 
@@ -19,14 +19,16 @@ define_time_fun del_min
 
 
 text \<open>Proove equality\<close>
-theorem link: "T'_link t1 t2 = T_link t1 t2 - 1" (* TODO *)
+theorem link: "T'_link t1 t2 = T_link t1 t2"
   using T'_link.elims by auto
 
 text \<open>Intended difference\<close>
-theorem ins_tree: "T'_ins_tree t ts = T_ins_tree t ts" (* TODO *)
-  sorry
+lemma rank: "T'_rank t = 0"
+  by (cases t) auto
+theorem ins_tree: "T'_ins_tree t ts = T_ins_tree t ts"
+  by (induction rule: T_ins_tree.induct) (auto simp: rank link)
 
-theorem "T'_insert a t = T_insert a t - 1" (* TODO *)
+theorem "T'_insert a t = T_insert a t"
   by (auto simp: ins_tree T_insert_def)
 
 theorem merge: "T'_merge t1 t2 = T_merge t1 t2"
@@ -44,7 +46,7 @@ theorem get_min_rest: "t \<noteq> [] \<Longrightarrow> T'_get_min_rest t = T_get
 theorem rev: "T'_rev xs = T_rev xs"
   by (induction xs) (auto simp: T_rev_def)
 
-theorem "t \<noteq> [] \<Longrightarrow> T'_del_min t = T_del_min t - 1" (* TODO *)
+theorem "t \<noteq> [] \<Longrightarrow> T'_del_min t = T_del_min t"
   by (auto simp: get_min_rest rev T_del_min_def merge split: prod.split tree.split)
 
 end
