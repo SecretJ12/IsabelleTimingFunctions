@@ -343,8 +343,10 @@ fun exp_type (Type (_, [T1, _])) = T1
   | exp_type _ = error "No valid let type"
 fun letc _ _ f expT exp nms Ts t =
     if length nms = 0
-    then plus (f exp) (SOME (Abs ("x", exp_type expT, opt_term (f (t $ Bound 0))) $ exp))
-    else plus (f exp) (SOME (build_abs (opt_term (f t)) nms Ts $ exp))
+    then plus (f exp) (case f (t $ Bound 0) of SOME t' => SOME (Abs ("x", exp_type expT, t') $ exp)
+                                             | NONE => NONE)
+    else plus (f exp) (case f t of SOME t' => SOME (build_abs t' nms Ts $ exp)
+                                 | NONE => NONE)
 
 (* The converter for timing functions given to the walker *)
 val converter : term option converter = {

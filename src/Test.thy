@@ -168,7 +168,7 @@ fun comp :: "nat \<Rightarrow> nat" where
 lemma comp_simp: "comp n = 0" by simp
 
 text \<open>Should take thm terms as argument for function terms\<close>
-define_time_fun comp terms comp_simp
+define_time_fun comp equations comp_simp
 
 text \<open>Non recursive function should be without cost for calling the function\<close>
 fun divide :: "nat \<Rightarrow> nat \<Rightarrow> nat" where "divide a b = a div b"
