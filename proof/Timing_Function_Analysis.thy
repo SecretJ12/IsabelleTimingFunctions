@@ -4,7 +4,6 @@ begin
 
 declare[[syntax_ambiguity_warning=false]]
 
-text \<open>Find better representation of val?\<close>
 type_synonym val = nat
 
 definition false :: "val \<Rightarrow> bool" where "false v \<equiv> v = 0"
@@ -75,7 +74,7 @@ cC:    "\<rho> \<turnstile>\<phi> c#v \<rightarrow>s (v,0)" |
 cF:    "length es = length vs \<Longrightarrow> length es = length ts
           \<Longrightarrow> (\<And>i. i < length vs \<Longrightarrow> \<rho> \<turnstile>\<phi> (es!i) \<rightarrow>s (vs!i,ts!i))
           \<Longrightarrow> \<phi> f = Some fe \<Longrightarrow> vs \<turnstile>\<phi> fe \<rightarrow>s (v,t) \<Longrightarrow> \<rho> \<turnstile>\<phi> (f> es) \<rightarrow>s (v,1+t+sum_list ts)" |
-cP:    "length es = length vs \<Longrightarrow> (\<And>i. i < length es \<Longrightarrow> \<rho> \<turnstile>\<phi> (es ! i) \<rightarrow>s (vs!i,ts!i))
+cP:    "length es = length vs \<Longrightarrow> length es = length ts \<Longrightarrow> (\<And>i. i < length es \<Longrightarrow> \<rho> \<turnstile>\<phi> (es ! i) \<rightarrow>s (vs!i,ts!i))
           \<Longrightarrow> pApp p vs = v \<Longrightarrow> \<rho> \<turnstile>\<phi> (p$p: es) \<rightarrow>s (v,sum_list ts)" |
 cIf1:  "\<rho> \<turnstile>\<phi> b \<rightarrow>s (eb,tb) \<Longrightarrow> true eb \<Longrightarrow> \<rho> \<turnstile>\<phi> t \<rightarrow>s (et,tt)
           \<Longrightarrow> \<rho> \<turnstile>\<phi> (IF b THEN t ELSE f) \<rightarrow>s (et,tb+tt)" |
@@ -139,10 +138,6 @@ lemma eval_count_eval: "\<rho> \<turnstile>\<phi> b \<rightarrow>s (v,t) \<Longr
 theorem  eval_eq_eval_count: "(\<rho> \<turnstile>\<phi> b \<rightarrow> v) \<longleftrightarrow> (\<exists>t. \<rho> \<turnstile>\<phi> b \<rightarrow>s (v,t))"
   using eval_count_eval eval_eval_count by auto
 
-(* TODO: define T and proove:
-proposition "\<rho> \<turnstile>\<phi> e \<rightarrow>s (v,t) \<longleftrightarrow> \<rho> \<turnstile>\<phi> e \<rightarrow> v \<and> T \<Delta> = t"
-*)
-
 fun \<T> :: "exp \<Rightarrow> exp" where
   "\<T> c#v = c#0"
 | "\<T> i#i = c#0"
@@ -162,6 +157,12 @@ definition defs_cor where
   (\<forall>f. (case \<phi> f of Some e \<Rightarrow> \<phi> (c$f) = None \<or> \<phi> (c$f) = Some (c e)
                   | None \<Rightarrow> \<phi> (c$f) = None))"
 
+definition no_time where
+  "no_time \<phi> = (\<forall>f. \<phi> c$f = None)"
+
+lemma no_time_defs_cor: "no_time \<phi> \<Longrightarrow> defs_cor \<phi>"
+  by (simp add: defs_cor_def no_time_def option.case_eq_if)
+
 lemma conv_trans: "defs_cor \<phi> \<Longrightarrow> \<phi> f = Some e \<Longrightarrow> (conv \<phi>) f = Some e"
   apply (cases f)
   by auto (smt (verit, best) conv.simps(1) defs_cor_def option.case_eq_if option.distinct(1))
@@ -169,17 +170,37 @@ lemma conv_trans: "defs_cor \<phi> \<Longrightarrow> \<phi> f = Some e \<Longrig
 lemma eval_conv_trans: "\<rho> \<turnstile>\<phi> e \<rightarrow> v \<Longrightarrow> defs_cor \<phi> \<Longrightarrow> \<rho> \<turnstile>(conv \<phi>) e \<rightarrow> v"
   by (induction rule: eval.induct) (auto simp: conv_trans)
 
-theorem
+theorem conv_cor:
   assumes "\<rho> \<turnstile>\<phi> e \<rightarrow>s (s,t)"
     and   "defs_cor \<phi>"
-  shows  "\<rho> \<turnstile>(conv \<phi>) (\<T> e) \<rightarrow> t"
+   shows  "\<rho> \<turnstile>(conv \<phi>) (\<T> e) \<rightarrow> t"
   using assms
 proof (induction \<rho> \<phi> e "(s,t)" arbitrary: s t rule: eval_count.induct)
   case (cF es vs ts \<rho> \<phi> f fe v t)
-  then show ?case sorry
+
+  from P[of "[c#1, \<T> fe]" "[1,t]" vs "conv \<phi>" "''sum''" "1+t"] cF.hyps(7) cF.prems sum
+  have "vs \<turnstile>conv \<phi> p$''sum'': [c#1, \<T> fe] \<rightarrow> 1 + t"
+    by (simp add: nth_Cons')
+  then have c_fe: "vs \<turnstile>conv \<phi> (c fe) \<rightarrow> 1 + t" by simp
+
+  from cF.hyps(3) cF.prems eval_conv_trans eval_eq_eval_count
+  have "\<forall>i<length vs. \<rho> \<turnstile>conv \<phi> es ! i \<rightarrow> vs ! i" by blast
+
+  with cF(1) cF(5) c_fe F[of es vs \<rho> "conv \<phi>" "c$f" "c fe" "1+t"]
+  have "\<rho> \<turnstile>conv \<phi> c$f> es \<rightarrow> 1 + t" by simp
+
+  with cF.hyps(1) cF.hyps(4) cF.prems
+  have "\<forall>i<length (c$f> es # map \<T> es). \<rho> \<turnstile>conv \<phi> (c$f> es # map \<T> es) ! i \<rightarrow> ((1 + t) # ts) ! i"
+    by (simp add: nth_Cons')
+
+  with cF.hyps(2) sum P[of "c$f> es # map \<T> es" "(1+t) # ts" \<rho> "conv \<phi>" "''sum''" "1 + t + sum_list ts"]
+  show ?case
+    by simp
 next
-  case (cP es vs \<rho> \<phi> ts p v)
-  then show ?case sorry
+  case (cP es vs ts \<rho> \<phi> p v)
+  with sum P[of "map \<T> es" ts \<rho> "conv \<phi>" "''sum''" "sum_list ts"]
+  show ?case
+    by auto
 next
   case (cIf1 \<rho> \<phi> b eb tb t et tt f)
 
@@ -227,6 +248,12 @@ next
   have "\<rho> \<turnstile>conv \<phi> (p$''sum'': ?ts) \<rightarrow> tb + tf" by simp
   then show ?case by simp
 qed simp+
+
+corollary conv_cor_no_time:
+  assumes "\<rho> \<turnstile>\<phi> e \<rightarrow>s (s,t)"
+    and   "no_time \<phi>"
+   shows  "\<rho> \<turnstile>(conv \<phi>) (\<T> e) \<rightarrow> t"
+  using assms conv_cor no_time_defs_cor by auto
 
 end
 
