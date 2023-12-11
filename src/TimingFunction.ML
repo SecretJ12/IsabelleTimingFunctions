@@ -134,7 +134,7 @@ let
   val T_T = change_typ T
 in
 (SOME (Syntax.check_term ctxt (Const (T_nm,T_T))))
-  handle (ERROR _) => (* TODO find better way detecting the correct function *)
+  handle (ERROR _) =>
     case Syntax.read_term ctxt (Long_Name.base_name T_nm)
       of (Const (nm,_)) => SOME (Const (nm,T_T))
        | _ => NONE
@@ -148,8 +148,6 @@ type 'a converter = {
   casec : local_theory -> term -> (term -> 'a) -> term -> term list -> 'a,
   letc : local_theory -> term -> (term -> 'a) -> typ -> term -> string list -> typ list -> term -> 'a
 };
-
-(* Count number of arguments needed for a function *)
 
 (* Walks over term and calls given converter *)
 fun walk_func (t1 $ t2) ts = walk_func t1 (t2::ts)
