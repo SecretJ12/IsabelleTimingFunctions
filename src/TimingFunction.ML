@@ -15,7 +15,7 @@ val fun_pretty':  Proof.context -> pfunc -> Pretty.T
 val fun_pretty:  Proof.context -> Function.info -> Pretty.T
 val print_timing':  Proof.context -> pfunc -> pfunc -> unit
 val print_timing:  Proof.context -> Function.info -> Function.info -> unit
-val reg_time_func: theory -> term -> term list -> 'a converter -> (bool -> local_theory -> term -> 'a -> term) -> bool -> Function.info * theory
+val reg_time_func: theory -> term -> term list -> 'a converter -> (bool -> local_theory -> term -> 'a -> term) -> bool -> string list -> Function.info * theory
 val reg_time_func_cmd: (string * (Facts.ref * Token.src list) list option) -> 'a converter -> (bool -> local_theory -> term -> 'a -> term) -> theory -> theory
 
 val time_dom_tac: Proof.context -> thm -> thm list -> int -> tactic
@@ -127,6 +127,7 @@ fun get_r (_ $ (_ $ _ $ r)) = r
 (* Return name of Const *)
 fun Const_name (Const (nm,_)) = SOME nm
   | Const_name _ = NONE
+val Const_name_val = Option.valOf o Const_name
 
 fun time_term ctxt (Const (nm,T)) =
 let
@@ -385,7 +386,7 @@ fun get_terms lthy (term: term) =
    handle Empty => error "Function not found"
 
 (* MAIN Convert given function into a timing function *)
-fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv  print =
+fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv print parents =
   let
     val lthy = Named_Target.theory_init theory
     val _ =
@@ -397,7 +398,7 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
     val is_partial = case info of SOME {is_partial, ...} => is_partial | _ => false
 
     (* 1. Fix all terms *)
-    (* Exchange Var in types and terms to Free *)
+    (* Exchange Var in types and terms to Free and check constraints *)
     val terms = map (map_aterms fixTerms #> map_types (map_atyps fixTypes) #> fixPartTerms lthy term) terms
 
     (* 1.5 Check if function is recursive *)
@@ -407,8 +408,12 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
     fun unique [] = []
       | unique (x::xs) = x::List.filter (fn x' => x <> x') xs
     val missing_funcs = find_missing lthy term (map get_r terms) |> unique
+    val _ = if List.exists (fn p => List.exists (fn c => Const_name_val c = p) missing_funcs) parents
+        then error "Mutual recursion is not allowed" else ()
     val theory = Local_Theory.exit_global lthy
-    val theory = List.foldr (fn (f, ctxt) => reg_time_func ctxt f (get_terms ctxt f) conv topConv print |> snd) theory missing_funcs
+    val theory = List.foldr (fn (f, ctxt) =>
+       reg_time_func ctxt f (get_terms ctxt f) conv topConv print (Const_name_val term::parents) |> snd)
+       theory missing_funcs
     val lthy = Named_Target.theory_init theory
 
     (* 3. Convert every equation
@@ -506,7 +511,7 @@ let
   val (_, theory') = reg_time_func theory fterm
     (case thms of NONE => get_terms theory fterm
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
-    conv topConv true
+    conv topConv true []
 in theory'
 end;
 
