@@ -8,21 +8,21 @@ text \<open>Formalization of David Sands' "Calculi for time analysis of function
       Chapter 2 "Computational-Models and Cost-Functions"\<close>
 
 text \<open>Assuming the model to works under natural numbers.\<close>
-datatype val = N nat | Li "val list"
+typedecl typs
+datatype val = N nat | Ty typs
 fun val_to_nat :: "val \<Rightarrow> nat" where
   "val_to_nat (N n) = n"
-| "val_to_nat (Li l) = length l"
 
 definition false :: "val \<Rightarrow> bool" where "false v \<equiv> v = N 0"
 definition true :: "val \<Rightarrow> bool" where "true v \<equiv> \<not> false v"
 
-type_synonym env = "val list"
-
+text \<open>Definition of functions and primary functions\<close>
 datatype func =
   Func string     ("($_)")
 | cFunc func    ("(c$_)")
 datatype pfunc = pFunc string   ("(p$_)")
 
+text \<open>Defines simple expression\<close>
 datatype exp =
     App func "exp list"         ("(_/> _)")
   | pApp pfunc "exp list"       ("(_/: _)")
@@ -30,18 +30,19 @@ datatype exp =
   | Ident nat                   ("(i#_)")
   | Const val                   ("(c#_)")
 
+text \<open>env represents local variables in a expression / function\<close>
+type_synonym env = "val list"
+text \<open>defs contains all the functions defined\<close>
 type_synonym defs = "func \<Rightarrow> exp option"
 
-term "(sum_list o map val_to_nat) :: val list \<Rightarrow> nat"
+text \<open>Exact set of primitive functions is unspecified,
+      Sand assumes arithmetic and boolean functions as well as list constructor.
+      For simplicity we only assume sum here.\<close>
+axiomatization pApp :: "string \<Rightarrow> val list \<Rightarrow> val" where
+  sum: "pApp ''sum'' es = (N o sum_list o map val_to_nat) es"
 
-lemma nat_to_val_to_nat: "map val_to_nat (map N es) = es"
-  by (metis length_map nth_equalityI nth_map val_to_nat.simps(1))
-
-locale timing =
-  fixes pApp :: "string \<Rightarrow> val list \<Rightarrow> val"
-  assumes sum: "pApp ''sum'' es = (N o sum_list o map val_to_nat) es"
-begin
-
+text \<open>The syntax \<rho> \<turnstile>\<phi> e \<rightarrow> v reads as
+  "Given environment \<rho>, in the context of definitions \<phi> expression e evaluates to value v"\<close>
 inductive eval :: "env \<Rightarrow> defs \<Rightarrow> exp \<Rightarrow> val \<Rightarrow> bool" ("(_/ \<turnstile>_/ _/ \<rightarrow> _)") where
 Id:   "\<rho> \<turnstile>\<phi> i#i \<rightarrow> (\<rho> ! i)" |
 C:    "\<rho> \<turnstile>\<phi> c#v \<rightarrow> v" |
@@ -64,6 +65,7 @@ declare P[simp]
 declare If1[simp]
 declare If2[simp]
 
+text \<open>Prove that semantic describes deterministic computation\<close>
 proposition "\<lbrakk> \<rho> \<turnstile>\<phi> e \<rightarrow> v; \<rho> \<turnstile>\<phi> e \<rightarrow> v' \<rbrakk> \<Longrightarrow> v = v'"
 proof (induction arbitrary: v' rule: eval.induct)
   case (F es vs \<rho> \<phi> f fe v)
@@ -80,6 +82,8 @@ next
   then show ?case using true_def by blast
 qed blast+
 
+text \<open>Defines step-counting Semantics.
+      Evaluates as eval, but additionally counts the number of applications of non-primitive functions\<close>
 inductive eval_count :: "env \<Rightarrow> defs \<Rightarrow> exp \<Rightarrow> val * nat \<Rightarrow> bool" ("(_/ \<turnstile>_/ _/ \<rightarrow>s _)") where
 cId:   "\<rho> \<turnstile>\<phi> i#i \<rightarrow>s (\<rho>!i,0)" |
 cC:    "\<rho> \<turnstile>\<phi> c#v \<rightarrow>s (v,0)" |
@@ -147,9 +151,11 @@ qed blast+
 lemma eval_count_eval: "\<rho> \<turnstile>\<phi> b \<rightarrow>s (v,t) \<Longrightarrow> \<rho> \<turnstile>\<phi> b \<rightarrow> v"
   by (induction \<rho> \<phi> b "(v,t)" arbitrary: v t rule: eval_count.induct) auto
 
+text \<open>Show that computation result of eval and eval_count is equal\<close>
 theorem  eval_eq_eval_count: "(\<rho> \<turnstile>\<phi> b \<rightarrow> v) \<longleftrightarrow> (\<exists>t. \<rho> \<turnstile>\<phi> b \<rightarrow>s (v,t))"
   using eval_count_eval eval_eval_count by auto
 
+text \<open>\<T> constructs the cost function for an expression\<close>
 fun \<T> :: "exp \<Rightarrow> exp" where
   "\<T> c#v = c#N 0"
 | "\<T> i#i = c#N 0"
@@ -157,31 +163,30 @@ fun \<T> :: "exp \<Rightarrow> exp" where
 | "\<T> (p$_: args) = p$''sum'': map \<T> args"
 | "\<T> (f> args) = p$''sum'': (c$f> args # map \<T> args)"
 
+text \<open>c constructs the cost function for a function given by its expression\<close>
 fun c :: "exp \<Rightarrow> exp" where
   "c e = p$''sum'': [c#N 1, \<T> e]"
 
+text \<open>Adds cost functions for existing functions in a definition\<close>
 fun conv :: "defs \<Rightarrow> defs" where
   "conv \<phi> (c$f) = (case \<phi> f of None \<Rightarrow> None | Some e \<Rightarrow> Some (c e))"
 | "conv \<phi> ($f) = \<phi> $f"
 
+text \<open>A definition is correct if each cost function fits to its function\<close>
 definition defs_cor where
   "defs_cor \<phi> =
   (\<forall>f. (case \<phi> f of Some e \<Rightarrow> \<phi> (c$f) = None \<or> \<phi> (c$f) = Some (c e)
                   | None \<Rightarrow> \<phi> (c$f) = None))"
 
-definition no_time where
-  "no_time \<phi> = (\<forall>f. \<phi> c$f = None)"
-
-lemma no_time_defs_cor: "no_time \<phi> \<Longrightarrow> defs_cor \<phi>"
-  by (simp add: defs_cor_def no_time_def option.case_eq_if)
-
 lemma conv_trans: "defs_cor \<phi> \<Longrightarrow> \<phi> f = Some e \<Longrightarrow> (conv \<phi>) f = Some e"
-  apply (cases f)
-  by auto (smt (verit, best) conv.simps(1) defs_cor_def option.case_eq_if option.distinct(1))
+  apply (induction f arbitrary: e)
+  by auto (smt (verit, del_insts) case_optionE defs_cor_def option.case_eq_if option.distinct(1))
 
 lemma eval_conv_trans: "\<rho> \<turnstile>\<phi> e \<rightarrow> v \<Longrightarrow> defs_cor \<phi> \<Longrightarrow> \<rho> \<turnstile>(conv \<phi>) e \<rightarrow> v"
   by (induction rule: eval.induct) (auto simp: conv_trans)
 
+text \<open>Prove correctness theorem that the converted expression with converted definitions
+      evaluates to the same result as the evaluated by the step counting semantic\<close>
 theorem conv_cor:
   assumes "\<rho> \<turnstile>\<phi> e \<rightarrow>s (s,t)"
     and   "defs_cor \<phi>"
@@ -192,7 +197,7 @@ proof (induction \<rho> \<phi> e "(s,t)" arbitrary: s t rule: eval_count.induct)
 
   obtain ts' where ts: "ts' = map N ts" by simp
   then have papp: "pApp ''sum'' (N (1 + t) # ts') = N (1 + t + sum_list ts)"
-    by (simp add: comp_def timing.sum timing_axioms)
+    by (simp add: comp_def sum)
   
   from P[of "[c#N 1, \<T> fe]" "[N 1,N t]" vs "conv \<phi>" "''sum''" "N (1+t)"] cF.hyps(7) cF.prems sum
   have "vs \<turnstile>conv \<phi> p$''sum'': [c#N 1, \<T> fe] \<rightarrow> N (1 + t)"
@@ -218,7 +223,7 @@ next
   
   obtain ts' where ts: "ts' = map N ts" by blast
   then have papp: "pApp ''sum'' ts' = N (sum_list ts)"
-    by (simp add: comp_def timing.sum timing_axioms)
+    by (simp add: comp_def sum)
 
   with ts cP sum P[of "map \<T> es" ts' \<rho> "conv \<phi>" "''sum''" "(N o sum_list o map val_to_nat) ts'"(*"map val_to_nat ts" \<rho> "conv \<phi>" "''sum''" "(sum_list) ts"*)]
   show ?case
@@ -241,7 +246,7 @@ next
   from cIf1(2) ifelse
   have args: "(\<forall>i < length ?ts. \<rho> \<turnstile>(conv \<phi>) (?ts ! i) \<rightarrow> ([N tb,N tt] ! i))"
     by (simp add: cIf1.prems nth_Cons')
-  have app: "pApp ''sum'' [N tb,N tt] = N (tb + tt)" by (simp add: timing.sum timing_axioms)
+  have app: "pApp ''sum'' [N tb,N tt] = N (tb + tt)" by (simp add: sum)
 
   from args app P[of ?ts "[N tb,N tt]"]
   have "\<rho> \<turnstile>conv \<phi> (p$''sum'': ?ts) \<rightarrow> N (tb + tt)" by simp
@@ -264,19 +269,24 @@ next
   from cIf2(2) ifelse
   have args: "(\<forall>i < length ?ts. \<rho> \<turnstile>(conv \<phi>) (?ts ! i) \<rightarrow> ([N tb,N tf] ! i))"
     by (simp add: cIf2.prems nth_Cons')
-  have app: "pApp ''sum'' [N tb,N tf] = N (tb + tf)" by (simp add: timing.sum timing_axioms)
+  have app: "pApp ''sum'' [N tb,N tf] = N (tb + tf)" by (simp add: sum)
 
   from args app P[of ?ts "[N tb,N tf]"]
   have "\<rho> \<turnstile>conv \<phi> (p$''sum'': ?ts) \<rightarrow> N (tb + tf)" by simp
   then show ?case by simp
 qed simp+
 
+text \<open>Defines a simple variant of correct definitions: no existing timing functions\<close>
+definition no_time where
+  "no_time \<phi> = (\<forall>f. \<phi> c$f = None)"
+
+lemma no_time_defs_cor: "no_time \<phi> \<Longrightarrow> defs_cor \<phi>"
+  by (simp add: defs_cor_def no_time_def option.case_eq_if)
+
 corollary conv_cor_no_time:
   assumes "\<rho> \<turnstile>\<phi> e \<rightarrow>s (s,t)"
     and   "no_time \<phi>"
    shows  "\<rho> \<turnstile>(conv \<phi>) (\<T> e) \<rightarrow> N t"
   using assms conv_cor no_time_defs_cor by auto
-
-end
 
 end
