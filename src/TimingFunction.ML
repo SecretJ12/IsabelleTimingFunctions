@@ -512,7 +512,7 @@ end;
 
 val _ = Outer_Syntax.command @{command_keyword "define_time_fun"}
   "Defines runtime function of a function"
-  (Parse.prop -- (Scan.option (Parse.keyword_improper "terms" -- Parse.thms1 >> snd))
+  (Parse.prop -- (Scan.option (Parse.keyword_improper "equations" -- Parse.thms1 >> snd))
     >> (fn p => Toplevel.theory (reg_time_func_cmd p converter top_converter)));
 
 

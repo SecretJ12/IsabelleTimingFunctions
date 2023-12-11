@@ -1,7 +1,7 @@
 theory TimingFunction
   imports Main
   keywords "define_time_fun" :: thy_decl
-    and    "terms"
+    and    "equations"
     and    "define_time_0" :: thy_decl
 begin
 
