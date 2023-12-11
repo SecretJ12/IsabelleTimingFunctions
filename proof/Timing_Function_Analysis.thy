@@ -4,9 +4,16 @@ begin
 
 declare[[syntax_ambiguity_warning=false]]
 
-type_synonym val = nat
+text \<open>Formalization of David Sands' "Calculi for time analysis of functional programs"
+      Chapter 2 "Computational-Models and Cost-Functions"\<close>
 
-definition false :: "val \<Rightarrow> bool" where "false v \<equiv> v = 0"
+text \<open>Assuming the model to works under natural numbers.\<close>
+datatype val = N nat | Li "val list"
+fun val_to_nat :: "val \<Rightarrow> nat" where
+  "val_to_nat (N n) = n"
+| "val_to_nat (Li l) = length l"
+
+definition false :: "val \<Rightarrow> bool" where "false v \<equiv> v = N 0"
 definition true :: "val \<Rightarrow> bool" where "true v \<equiv> \<not> false v"
 
 type_synonym env = "val list"
@@ -25,9 +32,14 @@ datatype exp =
 
 type_synonym defs = "func \<Rightarrow> exp option"
 
+term "(sum_list o map val_to_nat) :: val list \<Rightarrow> nat"
+
+lemma nat_to_val_to_nat: "map val_to_nat (map N es) = es"
+  by (metis length_map nth_equalityI nth_map val_to_nat.simps(1))
+
 locale timing =
   fixes pApp :: "string \<Rightarrow> val list \<Rightarrow> val"
-  assumes sum: "pApp ''sum'' es = sum_list es"
+  assumes sum: "pApp ''sum'' es = (N o sum_list o map val_to_nat) es"
 begin
 
 inductive eval :: "env \<Rightarrow> defs \<Rightarrow> exp \<Rightarrow> val \<Rightarrow> bool" ("(_/ \<turnstile>_/ _/ \<rightarrow> _)") where
@@ -139,14 +151,14 @@ theorem  eval_eq_eval_count: "(\<rho> \<turnstile>\<phi> b \<rightarrow> v) \<lo
   using eval_count_eval eval_eval_count by auto
 
 fun \<T> :: "exp \<Rightarrow> exp" where
-  "\<T> c#v = c#0"
-| "\<T> i#i = c#0"
+  "\<T> c#v = c#N 0"
+| "\<T> i#i = c#N 0"
 | "\<T> (IF b THEN t ELSE f) = p$''sum'': [\<T> b, IF b THEN \<T> t ELSE \<T> f]"
 | "\<T> (p$_: args) = p$''sum'': map \<T> args"
 | "\<T> (f> args) = p$''sum'': (c$f> args # map \<T> args)"
 
 fun c :: "exp \<Rightarrow> exp" where
-  "c e = p$''sum'': [c#1, \<T> e]"
+  "c e = p$''sum'': [c#N 1, \<T> e]"
 
 fun conv :: "defs \<Rightarrow> defs" where
   "conv \<phi> (c$f) = (case \<phi> f of None \<Rightarrow> None | Some e \<Rightarrow> Some (c e))"
@@ -173,34 +185,44 @@ lemma eval_conv_trans: "\<rho> \<turnstile>\<phi> e \<rightarrow> v \<Longrighta
 theorem conv_cor:
   assumes "\<rho> \<turnstile>\<phi> e \<rightarrow>s (s,t)"
     and   "defs_cor \<phi>"
-   shows  "\<rho> \<turnstile>(conv \<phi>) (\<T> e) \<rightarrow> t"
+   shows  "\<rho> \<turnstile>(conv \<phi>) (\<T> e) \<rightarrow> N t"
   using assms
 proof (induction \<rho> \<phi> e "(s,t)" arbitrary: s t rule: eval_count.induct)
   case (cF es vs ts \<rho> \<phi> f fe v t)
 
-  from P[of "[c#1, \<T> fe]" "[1,t]" vs "conv \<phi>" "''sum''" "1+t"] cF.hyps(7) cF.prems sum
-  have "vs \<turnstile>conv \<phi> p$''sum'': [c#1, \<T> fe] \<rightarrow> 1 + t"
+  obtain ts' where ts: "ts' = map N ts" by simp
+  then have papp: "pApp ''sum'' (N (1 + t) # ts') = N (1 + t + sum_list ts)"
+    by (simp add: comp_def timing.sum timing_axioms)
+  
+  from P[of "[c#N 1, \<T> fe]" "[N 1,N t]" vs "conv \<phi>" "''sum''" "N (1+t)"] cF.hyps(7) cF.prems sum
+  have "vs \<turnstile>conv \<phi> p$''sum'': [c#N 1, \<T> fe] \<rightarrow> N (1 + t)"
     by (simp add: nth_Cons')
-  then have c_fe: "vs \<turnstile>conv \<phi> (c fe) \<rightarrow> 1 + t" by simp
+  then have c_fe: "vs \<turnstile>conv \<phi> (c fe) \<rightarrow> N (1 + t)" by simp
 
   from cF.hyps(3) cF.prems eval_conv_trans eval_eq_eval_count
   have "\<forall>i<length vs. \<rho> \<turnstile>conv \<phi> es ! i \<rightarrow> vs ! i" by blast
 
-  with cF(1) cF(5) c_fe F[of es vs \<rho> "conv \<phi>" "c$f" "c fe" "1+t"]
-  have "\<rho> \<turnstile>conv \<phi> c$f> es \<rightarrow> 1 + t" by simp
+  with cF(1) cF(5) c_fe F[of es vs \<rho> "conv \<phi>" "c$f" "c fe" "N (1+t)"]
+  have "\<rho> \<turnstile>conv \<phi> c$f> es \<rightarrow> N (1 + t)" by simp
 
-  with cF.hyps(1) cF.hyps(4) cF.prems
-  have "\<forall>i<length (c$f> es # map \<T> es). \<rho> \<turnstile>conv \<phi> (c$f> es # map \<T> es) ! i \<rightarrow> ((1 + t) # ts) ! i"
+  with cF.hyps(1) cF.hyps(4) cF.prems ts cF.hyps(2)
+  have "\<forall>i<length (c$f> es # map \<T> es). \<rho> \<turnstile>conv \<phi> (c$f> es # map \<T> es) ! i \<rightarrow> ((N (1 + t)) # ts') ! i"
     by (simp add: nth_Cons')
 
-  with cF.hyps(2) sum P[of "c$f> es # map \<T> es" "(1+t) # ts" \<rho> "conv \<phi>" "''sum''" "1 + t + sum_list ts"]
+  with cF.hyps(2) sum papp ts
+    P[of "c$f> es # map \<T> es" "(N (1+t)) # ts'" \<rho> "conv \<phi>" "''sum''" "N (1 + t + sum_list ts)"]
   show ?case
     by simp
 next
   case (cP es vs ts \<rho> \<phi> p v)
-  with sum P[of "map \<T> es" ts \<rho> "conv \<phi>" "''sum''" "sum_list ts"]
+  
+  obtain ts' where ts: "ts' = map N ts" by blast
+  then have papp: "pApp ''sum'' ts' = N (sum_list ts)"
+    by (simp add: comp_def timing.sum timing_axioms)
+
+  with ts cP sum P[of "map \<T> es" ts' \<rho> "conv \<phi>" "''sum''" "(N o sum_list o map val_to_nat) ts'"(*"map val_to_nat ts" \<rho> "conv \<phi>" "''sum''" "(sum_list) ts"*)]
   show ?case
-    by auto
+    by simp
 next
   case (cIf1 \<rho> \<phi> b eb tb t et tt f)
 
@@ -213,16 +235,16 @@ next
     using cIf1.prems eval_conv_trans by auto
 
   from b cIf1(3) cIf1(5)
-  have ifelse: "\<rho> \<turnstile>(conv \<phi>) IF b THEN \<T> t ELSE \<T> f \<rightarrow> tt"
+  have ifelse: "\<rho> \<turnstile>(conv \<phi>) IF b THEN \<T> t ELSE \<T> f \<rightarrow> N tt"
     by (simp add: cIf1.prems)
 
   from cIf1(2) ifelse
-  have args: "(\<forall>i < length ?ts. \<rho> \<turnstile>(conv \<phi>) (?ts ! i) \<rightarrow> ([tb,tt] ! i))"
+  have args: "(\<forall>i < length ?ts. \<rho> \<turnstile>(conv \<phi>) (?ts ! i) \<rightarrow> ([N tb,N tt] ! i))"
     by (simp add: cIf1.prems nth_Cons')
-  have app: "pApp ''sum'' [tb,tt] = tb + tt" by (simp add: timing.sum timing_axioms)
+  have app: "pApp ''sum'' [N tb,N tt] = N (tb + tt)" by (simp add: timing.sum timing_axioms)
 
-  from args app P[of ?ts "[tb,tt]"]
-  have "\<rho> \<turnstile>conv \<phi> (p$''sum'': ?ts) \<rightarrow> tb + tt" by simp
+  from args app P[of ?ts "[N tb,N tt]"]
+  have "\<rho> \<turnstile>conv \<phi> (p$''sum'': ?ts) \<rightarrow> N (tb + tt)" by simp
   then show ?case by simp
 next
   case (cIf2 \<rho> \<phi> b eb tb f ef tf t)
@@ -236,23 +258,23 @@ next
     using cIf2.prems eval_conv_trans by auto
 
   from b cIf2(3) cIf2(5)
-  have ifelse: "\<rho> \<turnstile>(conv \<phi>) IF b THEN \<T> t ELSE \<T> f \<rightarrow> tf"
+  have ifelse: "\<rho> \<turnstile>(conv \<phi>) IF b THEN \<T> t ELSE \<T> f \<rightarrow> N tf"
     by (simp add: cIf2.prems)
 
   from cIf2(2) ifelse
-  have args: "(\<forall>i < length ?ts. \<rho> \<turnstile>(conv \<phi>) (?ts ! i) \<rightarrow> ([tb,tf] ! i))"
+  have args: "(\<forall>i < length ?ts. \<rho> \<turnstile>(conv \<phi>) (?ts ! i) \<rightarrow> ([N tb,N tf] ! i))"
     by (simp add: cIf2.prems nth_Cons')
-  have app: "pApp ''sum'' [tb,tf] = tb + tf" by (simp add: timing.sum timing_axioms)
+  have app: "pApp ''sum'' [N tb,N tf] = N (tb + tf)" by (simp add: timing.sum timing_axioms)
 
-  from args app P[of ?ts "[tb,tf]"]
-  have "\<rho> \<turnstile>conv \<phi> (p$''sum'': ?ts) \<rightarrow> tb + tf" by simp
+  from args app P[of ?ts "[N tb,N tf]"]
+  have "\<rho> \<turnstile>conv \<phi> (p$''sum'': ?ts) \<rightarrow> N (tb + tf)" by simp
   then show ?case by simp
 qed simp+
 
 corollary conv_cor_no_time:
   assumes "\<rho> \<turnstile>\<phi> e \<rightarrow>s (s,t)"
     and   "no_time \<phi>"
-   shows  "\<rho> \<turnstile>(conv \<phi>) (\<T> e) \<rightarrow> t"
+   shows  "\<rho> \<turnstile>(conv \<phi>) (\<T> e) \<rightarrow> N t"
   using assms conv_cor no_time_defs_cor by auto
 
 end
