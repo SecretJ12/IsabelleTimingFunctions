@@ -28,9 +28,7 @@ struct
 val bprefix = Attrib.setup_config_string @{binding "time_prefix"} (K "T_")
 
 (* some default values to build terms easier *)
-val natTyp = Type ("Nat.nat", [])
-val zero = Const ("Groups.zero_class.zero", natTyp)
-val one = Const ("Groups.one_class.one", natTyp);
+val one = Const (@{const_name "Groups.one"}, HOLogic.natT);
 (* Extracts terms from function info *)
 fun terms_of_info (info: Function.info) =
 let
@@ -77,20 +75,23 @@ end
 fun print_timing ctxt (oinfo: Function.info) (tinfo: Function.info) =
   print_timing' ctxt (info_pfunc oinfo) (info_pfunc tinfo)
 
+val If_name = @{const_name "HOL.If"}
+val Let_name = @{const_name "HOL.Let"}
+
 (* returns true if it's an if term *)
-fun is_if (Const (n,_)) = (n = "HOL.If")
+fun is_if (Const (n,_)) = (n = If_name)
   | is_if _ = false
 (* returns true if it's a case term *)
 fun is_case (Const (n,_)) = String.isPrefix "case_" (List.last (String.fields (fn s => s = #".") n))
   | is_case _ = false
 (* returns true if it's a let term *)
-fun is_let (Const (n,_)) = (n = "HOL.Let")
+fun is_let (Const (n,_)) = (n = Let_name)
   | is_let _ = false
 (* change type of original function to new type (_ \<Rightarrow> ... \<Rightarrow> _ to _ \<Rightarrow> ... \<Rightarrow> nat)
     and replace all function arguments f with (t*T_f) *)
 fun change_typ (Type ("fun", [T1, T2])) = Type ("fun", [check_for_fun T1, change_typ T2])
-  | change_typ _ = natTyp
-and check_for_fun (f as Type ("fun", [_,_])) = Type ("Product_Type.prod", [f, change_typ f])
+  | change_typ _ = HOLogic.natT
+and check_for_fun (f as Type ("fun", [_,_])) = HOLogic.mk_prodT (f, change_typ f)
   | check_for_fun f = f
 (* Convert string name of function to its timing equivalent *)
 fun fun_name_to_time ctxt name =
@@ -213,7 +214,7 @@ fun fixPartTerms ctxt term t =
               (check_args "func" (t,args); build_func (t, map f args))),
           constc = (fn _ => fn _ => fn _ => fn c => (case c of Abs _ => error "No are lambdas allowed" | _ => c)),
           ifc = (fn _ => fn _ => fn f => fn T => fn cond => fn tt => fn tf =>
-            ((Const ("HOL.If", T)) $ f cond $ (f tt) $ (f tf))),
+            ((Const (If_name, T)) $ f cond $ (f tt) $ (f tf))),
           casec = fixCasec,
           letc = (fn _ => fn _ => fn f => fn expT => fn exp => fn nms => fn Ts => fn t =>
               let
@@ -221,7 +222,7 @@ fun fixPartTerms ctxt term t =
                 (case f (t$exp) of t$_ => t | _ => error "Case could not be fixed (let)")
                 else f t
               in
-              (Const ("HOL.Let",expT) $ (f exp) $ build_abs f' nms Ts) end)
+              (Const (Let_name,expT) $ (f exp) $ build_abs f' nms Ts) end)
       }) t
   end
 
@@ -264,11 +265,11 @@ fun find_missing ctxt term terms =
 (* 3. Convert equations *)
 (* Some Helper *)
 val plusTyp = @{typ "nat => nat => nat"}
-fun plus (SOME a) (SOME b) = SOME (Const ("Groups.plus_class.plus", plusTyp) $ a $ b)
+fun plus (SOME a) (SOME b) = SOME (Const (@{const_name "Groups.plus"}, plusTyp) $ a $ b)
   | plus (SOME a) NONE = SOME a
   | plus NONE (SOME b) = SOME b
   | plus NONE NONE = NONE
-fun opt_term NONE = zero
+fun opt_term NONE = HOLogic.zero
   | opt_term (SOME t) = t
 fun time_name_of_free ctxt nm = (Config.get ctxt bprefix)^nm^"_"
 
@@ -289,12 +290,12 @@ end
 
 (* Convert arguments of left side of a term *)
 fun conv_arg ctxt _ (f as Free (nm,T as Type("fun",_))) =
-  (Const ("Product_Type.Pair",
-      Type ("fun", [T,Type ("fun",[change_typ T,Type ("Product_Type.prod",[T,change_typ T])])]))
+  (Const (@{const_name "Product_Type.Pair"},
+      Type ("fun", [T,Type ("fun",[change_typ T, HOLogic.mk_prodT (T,change_typ T)])]))
     $ f $ Free (time_name_of_free ctxt nm, change_typ T))
   | conv_arg ctxt origin (f as Const (_,T as Type("fun",_))) =
-  (Const ("Product_Type.Pair",
-      Type ("fun", [T,Type ("fun",[change_typ T,Type ("Product_Type.prod",[T,change_typ T])])]))
+  (Const (@{const_name "Product_Type.Pair"},
+      Type ("fun", [T,Type ("fun",[change_typ T, HOLogic.mk_prodT (T,change_typ T)])]))
     $ f $ (fun_to_time ctxt origin f |> Option.valOf))
   | conv_arg _ _ x = x
 fun conv_args ctxt origin = map (conv_arg ctxt origin)
@@ -313,7 +314,7 @@ fun casecTyp (Type (n, [T1, T2])) =
       Type (n, [change_typ T1, (if casecIsCase T2 then casecTyp else casecLastTyp) T2])
   | casecTyp _ = error "Invalid case type"
 fun casecAbs f (Abs (v,Ta,t)) = (case casecAbs f t of (nconst,t) => (nconst,Abs (v,Ta,t)))
-  | casecAbs f t = (case f t of NONE => (false,zero) | SOME t => (true,t))
+  | casecAbs f t = (case f t of NONE => (false,HOLogic.zero) | SOME t => (true,t))
 fun casecArgs _ [t] = (false, [t])
   | casecArgs f (t::ar) =
     (case casecAbs f t of (nconst, tt) => 
@@ -337,7 +338,7 @@ fun ifc _ _ f _ cond tt ft =
     val ft = f ft
   in
     (case (tt,ft) of (NONE, NONE) => NONE | _ =>
-      plus (SOME ((Const ("HOL.If", @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ cond $ (opt_term tt) $ (opt_term ft))) (f cond))
+      plus (SOME ((Const (If_name, @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ cond $ (opt_term tt) $ (opt_term ft))) (f cond))
   end
 
 fun exp_type (Type (_, [T1, _])) = T1
