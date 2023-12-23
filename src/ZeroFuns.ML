@@ -8,11 +8,14 @@ end
 structure Zero_Funcs : ZERO_FUNCS =
 struct
 
-fun get_constrs thy (Type (n, _)) = these (BNF_LFP_Compat.get_constrs thy n)
+val _ = Ctr_Sugar.ctr_sugar_of
+
+fun get_constrs thy (Type (n, _)) = these (Ctr_Sugar.ctr_sugar_of_global thy n |> Option.map #ctrs)
   | get_constrs _ _ = []
 (* returns if something is a constructor (found in smt_normalize.ML) *)
 fun is_constr thy (n, T) =
-    let fun match (m, U) = m = n andalso Sign.typ_instance thy (T, U)
+    let fun match (Const (m, U)) = m = n andalso Sign.typ_instance thy (T, U)
+          | match _ = error "Internal error: unknown constructor"
     in can (the o find_first match o get_constrs thy o Term.body_type) T end
 
 
