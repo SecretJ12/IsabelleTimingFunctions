@@ -99,10 +99,7 @@ function terminationB :: \<open>nat \<Rightarrow> bool\<close> where
 \<open>terminationB n = (if n \<le> 1 then True else if (Suc 1) dvd n then terminationB (n div (Suc 1)) else terminationB ((Suc (Suc 1)) * n + 1))\<close>
   by auto
 termination sorry
-define_time_0 "(div)"
 define_time_0 "(dvd)"
-define_time_0 "(*)"
-define_time_0 "(\<le>)"
 define_time_fun terminationB
 
 text \<open>The command should handle case expressions\<close>
@@ -220,5 +217,5 @@ lemma revmap': "T_revmap' (f,T_f) xs ys = Suc (length xs) + foldr ((+) o T_f) xs
   by (induction xs arbitrary: ys) auto
 lemma "T_revmap (f,T_f) xs = Suc (length xs) + foldr ((+) o T_f) xs 0"
   by (simp add: revmap')
-  
+
 end

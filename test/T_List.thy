@@ -2,12 +2,9 @@ theory T_List
   imports "../src/TimingFunction" "HOL-Data_Structures.Time_Funs"
 begin
 
-fun length :: "'a list \<Rightarrow> nat" where
-  "length [] = 0"
-| "length (_#xs) = length xs + 1"
-
 declare [[time_prefix = "T'_"]]
-define_time_fun length
+define_time_fun length equations list.size(3) list.size(4)
+abbreviation "T'_length \<equiv> T'_size"
 define_time_fun map
 define_time_fun filter
 define_time_fun take

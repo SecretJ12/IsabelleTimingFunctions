@@ -11,8 +11,6 @@ define_time_fun splay_max
 define_time_fun insert
 define_time_fun delete
 
-value "T'_splay (1::nat) \<langle>Leaf, 1, Leaf\<rangle>"
-
 text \<open>Proove equality\<close>
 theorem splay: "T'_splay x t = T_splay x t"
   by (induction x t rule: T_splay.induct) (auto split: tree.split)
