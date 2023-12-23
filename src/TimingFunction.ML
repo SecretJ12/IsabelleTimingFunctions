@@ -34,7 +34,7 @@ fun terms_of_info (info: Function.info) =
 let
   val {simps, ...} = info
 in
-  map Thm.prop_of (case simps of SOME s => s | NONE => error "Function has no terms")
+  map Thm.prop_of (case simps of SOME s => s | NONE => error "No terms of function found in info")
 end;
 
 type pfunc = {
@@ -45,7 +45,7 @@ type pfunc = {
 fun info_pfunc (info: Function.info): pfunc =
 let
   val {defname, fs, ...} = info;
-  val T = case hd fs of (Const (_,T)) => T | _ => error "Invalid info"
+  val T = case hd fs of (Const (_,T)) => T | _ => error "Internal error: Invalid info to print"
 in
   { name=Binding.name_of defname, terms=terms_of_info info, typ=T }
 end
@@ -99,7 +99,7 @@ let
   val prefix = Config.get ctxt bprefix
   fun replace_last_name [n] = [prefix ^ n]
     | replace_last_name (n::ns) = n :: (replace_last_name ns)
-    | replace_last_name _ = error "Invalid function with empty name"
+    | replace_last_name _ = error "Internal error: Invalid function name to convert"
   val parts = String.fields (fn s => s = #".") name
 in
   String.concatWith "." (replace_last_name parts)
@@ -118,13 +118,13 @@ fun rem_abs f (Abs (_,_,t)) = rem_abs f t
   | rem_abs f t = f t
 (* Map right side of equation *)
 fun map_r f (pT $ (eq $ l $ r)) = (pT $ (eq $ l $ f r))
-  | map_r _ _ = error "Invalid function term"
+  | map_r _ _ = error "Internal error: No right side of equation found"
 (* Get left side of equation *)
 fun get_l (_ $ (_ $ l $ _)) = l
-  | get_l _ = error "Invalid function term"
+  | get_l _ = error "Internal error: No left side of equation found"
 (* Get right side of equation *)
 fun get_r (_ $ (_ $ _ $ r)) = r
-  | get_r _ = error "Invalid function term"
+  | get_r _ = error "Internal error: No right side of equation found"
 (* Return name of Const *)
 fun Const_name (Const (nm,_)) = SOME nm
   | Const_name _ = NONE
@@ -141,7 +141,7 @@ in
       of (Const (nm,_)) => SOME (Const (nm,T_T))
        | _ => NONE
 end
-  | time_term _ _ = error "Invalid term"
+  | time_term _ _ = error "Internal error: No valid function given"
 
 type 'a converter = {
   constc : local_theory -> term -> (term -> 'a) -> term -> 'a,
@@ -160,25 +160,25 @@ fun walk_abs (Abs (nm,T,t)) nms Ts = walk_abs t (nm::nms) (T::Ts)
   | walk_abs t nms Ts = (t, nms, Ts)
 fun build_abs t (nm::nms) (T::Ts) = build_abs (Abs (nm,T,t)) nms Ts
   | build_abs t [] [] = t
-  | build_abs _ _ _ = error "Invalid abs to build"
+  | build_abs _ _ _ = error "Internal error: Invalid terms to build abs"
 fun walk ctxt origin (conv as {ifc, casec, funcc, letc, ...} : 'a converter) (t as _ $ _) =
   let
     val (f, args) = walk_func t []
     val this = (walk ctxt origin conv)
-    val _ = (case f of Abs _ => error "Lambdas are not allowed" | _ => ())
+    val _ = (case f of Abs _ => error "Lambdas not supported" | _ => ())
   in
     (if is_if f then
       (case f of (Const (_,T)) =>
         (case args of [cond, t, f] => ifc ctxt origin this T cond t f
-                   | _ => error "Partial applications not allowed (if)")
-               | _ => error "Invalid if term")
+                   | _ => error "Partial applications not supported (if)")
+               | _ => error "Internal error: invalid if term")
       else if is_case f then casec ctxt origin this f args
       else if is_let f then
       (case f of (Const (_,lT)) =>
          (case args of [exp, t] => 
             let val (t,nms,Ts) = walk_abs t [] [] in letc ctxt origin this lT exp nms Ts t end
                      | _ => error "Partial applications not allowed (let)")
-               | _ => error "Invalid let term")
+               | _ => error "Internal error: invalid let term")
       else funcc ctxt origin this f args)
   end
   | walk ctxt origin (conv as {constc, ...}) c = 
@@ -196,14 +196,14 @@ fun casecAbs ctxt f n (Type (_,[_,Tr])) (Abs (v,Ta,t)) = Abs (v,Ta,casecAbs ctxt
   | casecAbs ctxt f n (Type (Tn,[T,Tr])) t =
     (case Variable.variant_fixes ["x"] ctxt of ([v],ctxt) =>
     (if Tn = "fun" then Abs(v,T,casecAbs ctxt f (n + 1) Tr t) else f t)
-    | _ => error "Could not fix variables")
+    | _ => error "Internal error: could not fix variable")
   | casecAbs _ f n _ t = f (casecBuildBounds n t)
 fun fixCasecCases _ _ _ [t] = [t]
   | fixCasecCases ctxt f (Type (_,[T,Tr])) (t::ts) = casecAbs ctxt f 0 T t :: fixCasecCases ctxt f Tr ts
-  | fixCasecCases _ _ _ _ = error "Invalid case types/terms"
+  | fixCasecCases _ _ _ _ = error "Internal error: invalid case types/terms"
 fun fixCasec ctxt _ f (t as Const (n,T)) args =
       (check_args "cases" (Syntax.read_term ctxt n,args); build_func (t,fixCasecCases ctxt f T args))
-  | fixCasec _ _ _ _ _ = error "Invalid case term"
+  | fixCasec _ _ _ _ _ = error "Internal error: invalid case term"
 
 fun fixPartTerms ctxt term t =
   let
@@ -212,14 +212,14 @@ fun fixPartTerms ctxt term t =
     map_r (walk ctxt term {
           funcc = (fn _ => fn _ => fn f => fn t => fn args =>
               (check_args "func" (t,args); build_func (t, map f args))),
-          constc = (fn _ => fn _ => fn _ => fn c => (case c of Abs _ => error "No are lambdas allowed" | _ => c)),
+          constc = (fn _ => fn _ => fn _ => fn c => (case c of Abs _ => error "Lambdas not supported" | _ => c)),
           ifc = (fn _ => fn _ => fn f => fn T => fn cond => fn tt => fn tf =>
             ((Const (If_name, T)) $ f cond $ (f tt) $ (f tf))),
           casec = fixCasec,
           letc = (fn _ => fn _ => fn f => fn expT => fn exp => fn nms => fn Ts => fn t =>
               let
                 val f' = if length nms = 0 then
-                (case f (t$exp) of t$_ => t | _ => error "Case could not be fixed (let)")
+                (case f (t$exp) of t$_ => t | _ => error "Internal error: case could not be fixed (let)")
                 else f t
               in
               (Const (Let_name,expT) $ (f exp) $ build_abs f' nms Ts) end)
@@ -242,18 +242,18 @@ fun is_rec ctxt term = List.foldr (or (find_rec ctxt term)) false
 fun check_fun ctxt origin f (func as Const (nm,T)) args =
 let
   val name_origin = origin |> dest_Const |> fst
-  val f_args = List.foldr (List.@) [] (map f args)
+  val f_args = List.concat (map f args)
 in
   if nm = name_origin orelse Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) (nm,T) then f_args else
       case time_term ctxt func of SOME _ => f_args
                                 | NONE => func :: f_args
 end
   | check_fun _ _ f (Free (_,_)) args =
-      List.foldr (List.@) [] (map f args)
-  | check_fun _ _ _ _ _ = error "Invalid function"
+      List.concat (map f args)
+  | check_fun _ _ _ _ _ = error "Internal error: invalid function"
 (* Returns list of all functions with undefined timing functions *)
 fun find_missing ctxt term terms =
-  List.foldr (List.@) []
+  List.concat
     (map (walk ctxt term {
         funcc = check_fun,
         constc = (fn _ => fn _ => fn _ => fn c => (case c of (Const (_,Type ("fun",_))) => [c] | _ => [])),
@@ -286,7 +286,7 @@ in
 end
   | fun_to_time ctxt _ (Free (nm,T)) =
       SOME (Free (time_name_of_free ctxt nm,change_typ T))
-  | fun_to_time _ _ _ = error "Invalid function to convert"
+  | fun_to_time _ _ _ = error "Internal error: invalid function to convert"
 
 (* Convert arguments of left side of a term *)
 fun conv_arg ctxt _ (f as Free (nm,T as Type("fun",_))) =
@@ -309,19 +309,19 @@ fun funcc ctxt origin f func args = List.foldr (I #-> plus)
 fun casecIsCase (Type (n1, [_,Type (n2, _)])) = (n1 = "fun" andalso n2 = "fun")
   | casecIsCase _ = false
 fun casecLastTyp (Type (n, [T1,T2])) = Type (n, [T1, change_typ T2])
-  | casecLastTyp _ = error "Invalid case type"
+  | casecLastTyp _ = error "Internal error: invalid case type"
 fun casecTyp (Type (n, [T1, T2])) =
       Type (n, [change_typ T1, (if casecIsCase T2 then casecTyp else casecLastTyp) T2])
-  | casecTyp _ = error "Invalid case type"
+  | casecTyp _ = error "Internal error: invalid case type"
 fun casecAbs f (Abs (v,Ta,t)) = (case casecAbs f t of (nconst,t) => (nconst,Abs (v,Ta,t)))
   | casecAbs f t = (case f t of NONE => (false,HOLogic.zero) | SOME t => (true,t))
 fun casecArgs _ [t] = (false, [t])
   | casecArgs f (t::ar) =
     (case casecAbs f t of (nconst, tt) => 
       casecArgs f ar ||> (fn ar => tt :: ar) |>> (if nconst then K true else I))
-  | casecArgs _ _ = error "Invalid case term"
+  | casecArgs _ _ = error "Internal error: invalid case term"
 fun casec _ _ f (Const (t,T)) args =
-  if not (casecIsCase T) then error "Invalid case type" else
+  if not (casecIsCase T) then error "Internal error: invalid case type" else
     let val (nconst, args') = casecArgs f args in
       plus
         (if nconst then
@@ -329,7 +329,7 @@ fun casec _ _ f (Const (t,T)) args =
          else NONE)
         (f (List.last args))
     end
-  | casec _ _ _ _ _ = error "Invalid case term"
+  | casec _ _ _ _ _ = error "Internal error: invalid case term"
 
 (* Handle if terms -> drop the term if true and false terms are zero *)
 fun ifc _ _ f _ cond tt ft =
@@ -342,7 +342,7 @@ fun ifc _ _ f _ cond tt ft =
   end
 
 fun exp_type (Type (_, [T1, _])) = T1
-  | exp_type _ = error "No valid let type"
+  | exp_type _ = error "Internal errror: no valid let type"
 fun letc _ _ f expT exp nms Ts t =
     if length nms = 0
     then plus (f exp) (case f (t $ Bound 0) of SOME t' => SOME (Abs ("x", exp_type expT, t') $ exp)
@@ -370,7 +370,7 @@ fun convert_term ctxt origin conv topConv (pT $ (Const (eqN, _) $ l $ r)) =
       $ (Const (eqN, @{typ "nat \<Rightarrow> nat \<Rightarrow> bool"})
         $ (build_func ((walk_func l []) |>> (fun_to_time ctxt origin) |>> Option.valOf ||> conv_args ctxt origin))
         $ (to_time ctxt origin conv topConv r))
-  | convert_term _ _ _ _ _ = error "Invalid term to convert"
+  | convert_term _ _ _ _ _ = error "Internal error: invalid term to convert"
 
 (* 4. Tactic to prove "f_dom n" *)
 fun time_dom_tac ctxt induct_rule domintros =
@@ -384,7 +384,7 @@ fun get_terms lthy (term: term) =
   Spec_Rules.retrieve_global lthy term
       |> hd |> #rules
       |> map Thm.prop_of
-   handle Empty => error "Function not found"
+   handle Empty => error "Function or terms of function not found"
 
 (* MAIN Convert given function into a timing function *)
 fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv print parents =
@@ -410,7 +410,7 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
       | unique (x::xs) = x::List.filter (fn x' => x <> x') xs
     val missing_funcs = find_missing lthy term (map get_r terms) |> unique
     val _ = if List.exists (fn p => List.exists (fn c => Const_name_val c = p) missing_funcs) parents
-        then error "Mutual recursion is not allowed" else ()
+        then error "Mutual recursion is not supported" else ()
     val theory = Local_Theory.exit_global lthy
     val theory = List.foldr (fn (f, ctxt) =>
        reg_time_func ctxt f (get_terms ctxt f) conv topConv print (Const_name_val term::parents) |> snd)
@@ -470,7 +470,7 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
             |> Variable.variant_frees lthy' []
             |> map fst
 
-          val {inducts, ...} = case info of SOME i => i | _ => error "No inducts available"
+          val {inducts, ...} = case info of SOME i => i | _ => error "Proof over dom failed as no induct rule was found"
           val induct = (Option.valOf inducts |> hd)
 
           val domintros = Proof_Context.get_fact lthy' (Facts.named (timing_name ^ ".domintros"))
@@ -496,7 +496,7 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
     (* Print result if print *)
     val _ = if not print then () else
         let
-          val (nm,T) = case term of Const t => t | _ => error "Invalid term"
+          val (nm,T) = case term of Const t => t | _ => error "Internal error: invalid term to print"
         in
           print_timing' print_ctxt { name=nm, terms=terms, typ=T } (info_pfunc time_info)
         end
