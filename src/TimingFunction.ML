@@ -92,6 +92,7 @@ fun is_let (Const (n,_)) = (n = Let_name)
 fun change_typ (Type ("fun", [T1, T2])) = Type ("fun", [check_for_fun T1, change_typ T2])
   | change_typ _ = HOLogic.natT
 and check_for_fun (f as Type ("fun", [_,_])) = HOLogic.mk_prodT (f, change_typ f)
+  | check_for_fun (Type ("Product_Type.prod", [t1,t2])) = HOLogic.mk_prodT (check_for_fun t1, check_for_fun t2)
   | check_for_fun f = f
 (* Convert string name of function to its timing equivalent *)
 fun fun_name_to_time ctxt name =
@@ -256,7 +257,7 @@ fun find_missing ctxt term terms =
   List.concat
     (map (walk ctxt term {
         funcc = check_fun,
-        constc = (fn _ => fn _ => fn _ => fn c => (case c of (Const (_,Type ("fun",_))) => [c] | _ => [])),
+        constc = (fn ctxt => fn origin => fn f => fn c => (case c of (Const (_,Type ("fun",_))) => check_fun ctxt origin f c [] | _ => [])),
         ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn t => fn r => f cond @ f t @ f r),
         casec = (fn _ => fn _ => fn f => fn _ => fn args => List.foldr (fn (t,fs) => rem_abs f t @ fs) [] args),
         letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp @ f t)
@@ -271,7 +272,6 @@ fun plus (SOME a) (SOME b) = SOME (Const (@{const_name "Groups.plus"}, plusTyp) 
   | plus NONE NONE = NONE
 fun opt_term NONE = HOLogic.zero
   | opt_term (SOME t) = t
-fun time_name_of_free ctxt nm = (Config.get ctxt bprefix)^nm^"_"
 
 (* Converting of function term *)
 fun fun_to_time ctxt origin (func as Const (nm,T)) =
@@ -284,24 +284,32 @@ in
   if Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) (nm,T) then NONE else
     time_term ctxt func
 end
-  | fun_to_time ctxt _ (Free (nm,T)) =
-      SOME (Free (time_name_of_free ctxt nm,change_typ T))
+  | fun_to_time _ _ (Free (nm,T)) = SOME (HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T))))
   | fun_to_time _ _ _ = error "Internal error: invalid function to convert"
 
 (* Convert arguments of left side of a term *)
-fun conv_arg ctxt _ (f as Free (nm,T as Type("fun",_))) =
-  (Const (@{const_name "Product_Type.Pair"},
-      Type ("fun", [T,Type ("fun",[change_typ T, HOLogic.mk_prodT (T,change_typ T)])]))
-    $ f $ Free (time_name_of_free ctxt nm, change_typ T))
+fun conv_arg _ _ (Free (nm,T as Type("fun",_))) = Free (nm, HOLogic.mk_prodT (T, change_typ T))
   | conv_arg ctxt origin (f as Const (_,T as Type("fun",_))) =
   (Const (@{const_name "Product_Type.Pair"},
       Type ("fun", [T,Type ("fun",[change_typ T, HOLogic.mk_prodT (T,change_typ T)])]))
     $ f $ (fun_to_time ctxt origin f |> Option.valOf))
+  | conv_arg ctxt origin ((Const ("Product_Type.Pair", _)) $ l $ r) = HOLogic.mk_prod (conv_arg ctxt origin l, conv_arg ctxt origin r)
   | conv_arg _ _ x = x
 fun conv_args ctxt origin = map (conv_arg ctxt origin)
 
+(* Handle function calls *)
+fun funcc_use_origin _ _ (Free (nm, T as Type ("fun",_))) = HOLogic.mk_fst (Free (nm,HOLogic.mk_prodT (T, change_typ T)))
+  | funcc_use_origin _ _ t = t
+fun funcc_conv_arg ctxt origin (t as (_ $ _)) = map_aterms (funcc_use_origin ctxt origin) t
+  | funcc_conv_arg _ _ (Free (nm, T as Type ("fun",_))) = (Free (nm, HOLogic.mk_prodT (T, change_typ T)))
+  | funcc_conv_arg ctxt origin (f as Const (_,T as Type("fun",_))) =
+  (Const (@{const_name "Product_Type.Pair"},
+      Type ("fun", [T,Type ("fun",[change_typ T, HOLogic.mk_prodT (T,change_typ T)])]))
+    $ f $ (fun_to_time ctxt origin f |> Option.valOf))
+  | funcc_conv_arg _ _ t = t
+fun funcc_conv_args ctxt origin = map (funcc_conv_arg ctxt origin)
 fun funcc ctxt origin f func args = List.foldr (I #-> plus)
-  (case fun_to_time ctxt origin func of SOME t => SOME (build_func (t,conv_args ctxt origin args))
+  (case fun_to_time ctxt origin func of SOME t => SOME (build_func (t,funcc_conv_args ctxt origin args))
                                       | NONE => NONE)
   (map f args)
 
@@ -332,13 +340,16 @@ fun casec _ _ f (Const (t,T)) args =
   | casec _ _ _ _ _ = error "Internal error: invalid case term"
 
 (* Handle if terms -> drop the term if true and false terms are zero *)
-fun ifc _ _ f _ cond tt ft =
+fun ifc ctxt origin f _ cond tt ft =
   let
+    fun use_origin _ _ (Free (nm, T as Type ("fun",_))) = HOLogic.mk_fst (Free (nm,HOLogic.mk_prodT (T, change_typ T)))
+      | use_origin _ _ t = t
+    val rcond = map_aterms (use_origin ctxt origin) cond
     val tt = f tt
     val ft = f ft
   in
     (case (tt,ft) of (NONE, NONE) => NONE | _ =>
-      plus (SOME ((Const (If_name, @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ cond $ (opt_term tt) $ (opt_term ft))) (f cond))
+      plus (SOME ((Const (If_name, @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ rcond $ (opt_term tt) $ (opt_term ft))) (f cond))
   end
 
 fun exp_type (Type (_, [T1, _])) = T1
@@ -361,7 +372,7 @@ val converter : term option converter = {
 fun top_converter is_rec _ _ = opt_term o (plus (if is_rec then SOME one else NONE))
 
 (* Use converter to convert right side of a term *)
-fun to_time ctxt origin converter top_converter term = 
+fun to_time ctxt origin converter top_converter term =
   top_converter ctxt origin (walk ctxt origin converter term)
 
 (* Converts a term to its running time version *)

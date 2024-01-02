@@ -173,10 +173,14 @@ define_time_fun divide
 lemma "T_divide a b = 0"
   by simp
 
+ML \<open>
+HOLogic.mk_fst (Free ("a",@{typ "nat*nat"}))
+\<close>
+
 text \<open>Should be able to translate functions with function as argument\<close>
 fun t_map :: "(('a \<Rightarrow> 'b) * ('a \<Rightarrow> nat)) \<Rightarrow> 'a list \<Rightarrow> nat" where
-  "t_map (p,p_f) [] = 1"
-| "t_map (p,p_f) (x#xs) = 1 + p_f x + t_map (p,p_f) xs"
+  "t_map f [] = 1"
+| "t_map f (x#xs) = 1 + snd f x + t_map f xs"
 define_time_fun map
 fun leng :: "'a list \<Rightarrow> nat" where
   "leng [] = 0" | "leng (x#xs) = Suc (leng xs)"
@@ -212,10 +216,21 @@ fun revmap' :: "('a \<Rightarrow> 'b) \<Rightarrow> 'a list \<Rightarrow> 'b lis
 | "revmap' f (x#xs) ys = revmap' f xs (f x # ys)"
 fun revmap :: "('a \<Rightarrow> 'b) \<Rightarrow> 'a list \<Rightarrow> 'b list" where
   "revmap f xs = revmap' f xs []"
+define_time_fun revmap'
 define_time_fun revmap
 lemma revmap': "T_revmap' (f,T_f) xs ys = Suc (length xs) + foldr ((+) o T_f) xs 0"
   by (induction xs arbitrary: ys) auto
 lemma "T_revmap (f,T_f) xs = Suc (length xs) + foldr ((+) o T_f) xs 0"
   by (simp add: revmap')
+
+fun func_in_pair :: "(nat * (nat \<Rightarrow> bool)) \<Rightarrow> bool" where
+  "func_in_pair (0, f) = f 0"
+| "func_in_pair (Suc n, f) = f n"
+fun t_func_in_pair :: "(nat * ((nat \<Rightarrow> bool) * (nat \<Rightarrow> nat))) \<Rightarrow> nat" where
+  "t_func_in_pair (0, f) = snd f 0"
+| "t_func_in_pair (Suc n, f) = snd f n"
+define_time_fun func_in_pair
+lemma "T_func_in_pair (n,f) = t_func_in_pair (n,f)"
+  by (induction n) auto
 
 end
