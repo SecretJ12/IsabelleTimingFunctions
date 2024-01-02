@@ -69,6 +69,18 @@ lemma "T_is_odd n = 2^(Suc n) - 1"
   apply simp
   by (metis (no_types, opaque_lifting) Suc_1 Suc_eq_plus1_left Suc_mask_eq_exp T_is_odd.simps(2) add_Suc_right add_diff_cancel_left' diff_Suc_Suc mult_2 mult_Suc_right power.simps(2))
 
+fun gt_9 :: "nat \<Rightarrow> bool" where
+  "gt_9 n = (n > 9)"
+fun T_gt_9 :: "nat \<Rightarrow> nat" where
+  "T_gt_9 _ = 9"
+fun empty_if :: "nat \<Rightarrow> bool" where
+  "empty_if n = (if gt_9 n then True else False)"
+fun t_empty_if :: "nat \<Rightarrow> nat" where
+  "t_empty_if n = 9"
+define_time_fun empty_if
+lemma "T_empty_if n = t_empty_if n "
+  by simp
+
 text \<open>More complex example for non asymptotic version\<close>
 fun add :: "nat \<Rightarrow> nat \<Rightarrow> nat" where
   "add 0 y = y"

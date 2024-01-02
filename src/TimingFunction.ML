@@ -28,7 +28,8 @@ struct
 val bprefix = Attrib.setup_config_string @{binding "time_prefix"} (K "T_")
 
 (* some default values to build terms easier *)
-val one = Const (@{const_name "Groups.one"}, HOLogic.natT);
+val zero = Const (@{const_name "Groups.zero"}, HOLogic.natT)
+val one = Const (@{const_name "Groups.one"}, HOLogic.natT)
 (* Extracts terms from function info *)
 fun terms_of_info (info: Function.info) =
 let
@@ -298,14 +299,16 @@ fun conv_arg _ _ (Free (nm,T as Type("fun",_))) = Free (nm, HOLogic.mk_prodT (T,
 fun conv_args ctxt origin = map (conv_arg ctxt origin)
 
 (* Handle function calls *)
+fun build_zero (Type ("fun", [T, R])) = Abs ("x", T, build_zero R)
+  | build_zero _ = zero
 fun funcc_use_origin _ _ (Free (nm, T as Type ("fun",_))) = HOLogic.mk_fst (Free (nm,HOLogic.mk_prodT (T, change_typ T)))
   | funcc_use_origin _ _ t = t
 fun funcc_conv_arg ctxt origin (t as (_ $ _)) = map_aterms (funcc_use_origin ctxt origin) t
   | funcc_conv_arg _ _ (Free (nm, T as Type ("fun",_))) = (Free (nm, HOLogic.mk_prodT (T, change_typ T)))
-  | funcc_conv_arg ctxt origin (f as Const (_,T as Type("fun",_))) =
+  | funcc_conv_arg ctxt origin (f as Const (_,T as Type ("fun",_))) =
   (Const (@{const_name "Product_Type.Pair"},
       Type ("fun", [T,Type ("fun",[change_typ T, HOLogic.mk_prodT (T,change_typ T)])]))
-    $ f $ (fun_to_time ctxt origin f |> Option.valOf))
+    $ f $ (Option.getOpt (fun_to_time ctxt origin f, build_zero T)))
   | funcc_conv_arg _ _ t = t
 fun funcc_conv_args ctxt origin = map (funcc_conv_arg ctxt origin)
 fun funcc ctxt origin f func args = List.foldr (I #-> plus)
@@ -348,8 +351,8 @@ fun ifc ctxt origin f _ cond tt ft =
     val tt = f tt
     val ft = f ft
   in
-    (case (tt,ft) of (NONE, NONE) => NONE | _ =>
-      plus (SOME ((Const (If_name, @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ rcond $ (opt_term tt) $ (opt_term ft))) (f cond))
+    plus (case (tt,ft) of (NONE, NONE) => NONE | _ =>
+       (SOME ((Const (If_name, @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ rcond $ (opt_term tt) $ (opt_term ft)))) (f cond)
   end
 
 fun exp_type (Type (_, [T1, _])) = T1
