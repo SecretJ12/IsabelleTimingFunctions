@@ -428,7 +428,7 @@ and reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
 
     (* 2. Find missing functions and define them *)
     fun unique [] = []
-      | unique (x::xs) = x::List.filter (fn x' => x <> x') xs
+      | unique (x::xs) = x::List.filter (fn x' => (fst (dest_Const x) <> fst (dest_Const x'))) xs
     val missing_funcs = find_missing lthy term (map get_r terms) |> unique
     val _ = if List.exists (fn p => List.exists (fn c => Const_name_val c = p) missing_funcs) parents
         then error "Mutual recursion is not supported" else ()
