@@ -6,7 +6,20 @@ declare [[time_prefix = "T'_"]]
 
 text \<open>Define timing function\<close>
 define_time_fun insert
-define_time_fun sift_down
+define_time_function sift_down
+termination
+by (relation "measure (%(l,a,r). max(height l) (height r))") (auto simp: max_def)
+
+text \<open>Can also be prooved over domintros, auto does the trick here\<close>
+declare [[time_prefix = "T''_"]]
+define_time_function sift_down
+lemma T''_sift_down_dom: "T''_sift_down_dom (l,a,r)"
+  apply (induction l a r rule: sift_down.induct)
+  by (auto simp: T''_sift_down.domintros)
+termination
+  by (simp add: T''_sift_down_dom)
+declare [[time_prefix = "T'_"]]
+
 define_time_fun del_left
 define_time_fun del_min
 

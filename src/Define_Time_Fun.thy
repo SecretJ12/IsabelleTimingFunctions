@@ -9,6 +9,7 @@ Functional Data Structures and Algorithms. A Proof Assistant Approach.
 theory Define_Time_Fun
   imports Main
   keywords "define_time_fun" :: thy_decl
+    and    "define_time_function" :: thy_goal
     and    "equations"
     and    "define_time_0" :: thy_decl
 begin

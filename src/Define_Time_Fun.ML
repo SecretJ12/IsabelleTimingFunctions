@@ -15,8 +15,9 @@ val fun_pretty':  Proof.context -> pfunc -> Pretty.T
 val fun_pretty:  Proof.context -> Function.info -> Pretty.T
 val print_timing':  Proof.context -> pfunc -> pfunc -> unit
 val print_timing:  Proof.context -> Function.info -> Function.info -> unit
-val reg_time_func: theory -> term -> term list -> 'a converter -> (bool -> local_theory -> term -> 'a -> term) -> bool -> string list -> Function.info * theory
-val reg_time_func_cmd: (string * (Facts.ref * Token.src list) list option) -> 'a converter -> (bool -> local_theory -> term -> 'a -> term) -> theory -> theory
+(*
+val reg_and_proove_time_func: local_theory -> term -> term list -> 'a converter -> (bool -> local_theory -> term -> 'a -> term) -> bool -> string list -> Function.info * theory
+*)
 
 val time_dom_tac: Proof.context -> thm -> thm list -> int -> tactic
 
@@ -394,14 +395,17 @@ fun time_dom_tac ctxt induct_rule domintros =
     [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros]) i)))
 
 
-fun get_terms lthy (term: term) =
-  Spec_Rules.retrieve_global lthy term
+fun get_terms theory (term: term) =
+  Spec_Rules.retrieve_global theory term
       |> hd |> #rules
       |> map Thm.prop_of
    handle Empty => error "Function or terms of function not found"
 
-(* MAIN Convert given function into a timing function *)
-fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv print parents =
+(* Register timing function of a given function *)
+fun reg_and_proove_time_func (theory: theory) (term: term) (terms: term list) conv topConv print parents =
+  reg_time_func theory term terms conv topConv false parents
+  |> proove_termination term terms print
+and reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv print parents =
   let
     val lthy = Named_Target.theory_init theory
     val _ =
@@ -425,11 +429,11 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
     val missing_funcs = find_missing lthy term (map get_r terms) |> unique
     val _ = if List.exists (fn p => List.exists (fn c => Const_name_val c = p) missing_funcs) parents
         then error "Mutual recursion is not supported" else ()
-    val theory = Local_Theory.exit_global lthy
-    val theory = List.foldr (fn (f, ctxt) =>
-       reg_time_func ctxt f (get_terms ctxt f) conv topConv print (Const_name_val term::parents) |> snd)
-       theory missing_funcs
-    val lthy = Named_Target.theory_init theory
+    
+    val lthy = List.foldr (fn (f, ctxt) =>
+       reg_and_proove_time_func ctxt f (get_terms ctxt f) conv topConv print (Const_name_val term::parents) |> snd)
+       (Local_Theory.exit_global lthy) missing_funcs
+       |> Named_Target.theory_init
 
     (* 3. Convert every equation
       - Change type of toplevel equation from _ \<Rightarrow> _ \<Rightarrow> bool to nat \<Rightarrow> nat \<Rightarrow> bool
@@ -466,45 +470,65 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
            | Match =>
         register true
 
-    (* Start proving the termination *)    
-    val lthy' = Named_Target.theory_init (Local_Theory.exit_global lthy)
+    (* Context for printing without showing question marks *)
+    val print_ctxt = lthy
+      |> Config.put show_question_marks false
+      |> Config.put show_sorts false (* Change it for debugging *)
+    (* Print result if print *)
+    val _ = if not print then () else
+        let
+          val (nm,T) = case term of Const t => t | _ => error "Internal error: invalid term to print"
+        in
+          print_timing' print_ctxt { name=nm, terms=terms, typ=T } { name=timing_name, terms=timing_terms, typ=change_typ T }
+        end
+  in
+    Local_Theory.exit_global lthy
+  end
+and proove_termination term terms print (theory: theory) =
+  let
+    val lthy = Named_Target.theory_init theory
+
+    (* Start proving the termination *)  
+    val info = SOME (Function.get_info lthy term) handle Empty => NONE
+    val timing_name = term
+      |> Term.term_name
+      |> fun_name_to_time lthy
 
     (* Proof by lexicographic_order_tac *)
-    val (time_info, lthy'') =
+    val (time_info, lthy') =
       (Function.prove_termination NONE
-        (Lexicographic_Order.lexicographic_order_tac false lthy') lthy')
+        (Lexicographic_Order.lexicographic_order_tac false lthy) lthy)
         handle (ERROR _) =>
         let
           val _ = warning "Falling back on proof over dom..."
-          fun args (a$(Free (nm,T))) = args a |> (fn ar => (nm,T)::ar)
+          fun args (a$(Var ((nm,_),T))) = args a |> (fn ar => (nm,T)::ar)
             | args (a$(Const (_,T))) = args a |> (fn ar => ("x",T)::ar)
             | args _ = []
           val dom_args =
             terms |> hd |> get_l |> args
-            |> Variable.variant_frees lthy' []
+            |> Variable.variant_frees lthy []
             |> map fst
 
           val {inducts, ...} = case info of SOME i => i | _ => error "Proof over dom failed as no induct rule was found"
           val induct = (Option.valOf inducts |> hd)
 
-          val domintros = Proof_Context.get_fact lthy' (Facts.named (timing_name ^ ".domintros"))
+          val domintros = Proof_Context.get_fact lthy (Facts.named (timing_name ^ ".domintros"))
           val prop = (timing_name ^ "_dom (" ^ (String.concatWith "," dom_args) ^ ")")
-                      |> Syntax.read_prop lthy'
+                      |> Syntax.read_prop lthy
 
           (* Prove a helper lemma *)
-          val dom_lemma = Goal.prove lthy' dom_args [] prop
+          val dom_lemma = Goal.prove lthy dom_args [] prop
             (fn {context, ...} => HEADGOAL (time_dom_tac context induct domintros))
           (* Add dom_lemma to simplification set *)
-          val simp_lthy = Simplifier.add_simp dom_lemma lthy'
-
+          val simp_lthy = Simplifier.add_simp dom_lemma lthy
         in
           (* Use lemma to prove termination *)
           Function.prove_termination NONE
-            (auto_tac simp_lthy) lthy'
+            (auto_tac simp_lthy) lthy
         end
     
     (* Context for printing without showing question marks *)
-    val print_ctxt = lthy''
+    val print_ctxt = lthy'
       |> Config.put show_question_marks false
       |> Config.put show_sorts false (* Change it for debugging *)
     (* Print result if print *)
@@ -515,25 +539,41 @@ fun reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
           print_timing' print_ctxt { name=nm, terms=terms, typ=T } (info_pfunc time_info)
         end
   in
-    (time_info, Local_Theory.exit_global lthy'')
-  end;
+    (time_info, Local_Theory.exit_global lthy')
+  end
 
 (* Convert function into its timing function (called by command) *)
-fun reg_time_func_cmd (func, thms) conv topConv (theory: theory) =
+fun reg_time_fun_cmd (func, thms) conv topConv (theory: theory) =
 let
   val ctxt = Proof_Context.init_global theory
   val fterm = Syntax.read_term ctxt func
-  val (_, theory') = reg_time_func theory fterm
+  val (_, lthy') = reg_and_proove_time_func theory fterm
     (case thms of NONE => get_terms theory fterm
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
     conv topConv true []
-in theory'
-end;
+in lthy'
+end
+
+(* Convert function into its timing function (called by command) with termination proof provided by user*)
+fun reg_time_function_cmd (func, thms) conv topConv (theory: theory) =
+let
+  val ctxt = Proof_Context.init_global theory
+  val fterm = Syntax.read_term ctxt func
+  val theory = reg_time_func theory fterm
+    (case thms of NONE => get_terms theory fterm
+                | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
+    conv topConv true []
+in theory
+end
+
+val parser = Parse.prop -- (Scan.option (Parse.keyword_improper "equations" -- Parse.thms1 >> snd))
 
 val _ = Outer_Syntax.command @{command_keyword "define_time_fun"}
   "Defines runtime function of a function"
-  (Parse.prop -- (Scan.option (Parse.keyword_improper "equations" -- Parse.thms1 >> snd))
-    >> (fn p => Toplevel.theory (reg_time_func_cmd p converter top_converter)));
+  (parser >> (fn p => Toplevel.theory (reg_time_fun_cmd p converter top_converter)))
 
+val _ = Outer_Syntax.command @{command_keyword "define_time_function"}
+  "Defines runtime function of a function"
+  (parser >> (fn p => Toplevel.theory (reg_time_function_cmd p converter top_converter)))
 
 end

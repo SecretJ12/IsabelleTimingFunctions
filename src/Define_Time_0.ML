@@ -8,8 +8,6 @@ end
 structure Zero_Funcs : ZERO_FUNCS =
 struct
 
-val _ = Ctr_Sugar.ctr_sugar_of
-
 fun get_constrs thy (Type (n, _)) = these (Ctr_Sugar.ctr_sugar_of_global thy n |> Option.map #ctrs)
   | get_constrs _ _ = []
 (* returns if something is a constructor (found in smt_normalize.ML) *)
