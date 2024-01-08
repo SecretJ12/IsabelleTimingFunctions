@@ -1,12 +1,12 @@
-theory TimingFunction
+theory Define_Time_Fun
   imports Main
   keywords "define_time_fun" :: thy_decl
     and    "equations"
     and    "define_time_0" :: thy_decl
 begin
 
-ML_file ZeroFuns.ML
-ML_file TimingFunction.ML
+ML_file Define_Time_0.ML
+ML_file Define_Time_Fun.ML
 
 declare [[time_prefix = "T_"]]
 
