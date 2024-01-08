@@ -1,5 +1,5 @@
 theory T_Selection
-  imports "../src/TimingFunction" "HOL-Data_Structures.Selection"
+  imports "../src/Define_Time_Fun" "HOL-Data_Structures.Selection"
 begin
 
 declare [[time_prefix = "T'_"]]

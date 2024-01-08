@@ -1,5 +1,5 @@
 theory T_Splay_Tree
-  imports "../src/TimingFunction" "Splay_Tree.Splay_Tree" "Amortized_Complexity.Splay_Tree_Analysis_Base"
+  imports "../src/Define_Time_Fun" "Splay_Tree.Splay_Tree" "Amortized_Complexity.Splay_Tree_Analysis_Base"
 begin
 
 declare [[time_prefix = "T'_"]]

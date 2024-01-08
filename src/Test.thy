@@ -1,5 +1,5 @@
 theory Test
-  imports "TimingFunction"
+  imports "Define_Time_Fun"
 begin
 
 chapter \<open>Definition on example\<close>

@@ -1,5 +1,5 @@
 theory T_Leftist_Heap
-  imports "../src/TimingFunction" "HOL-Data_Structures.Leftist_Heap"
+  imports "../src/Define_Time_Fun" "HOL-Data_Structures.Leftist_Heap"
 begin
 
 declare [[time_prefix = "T'_"]]

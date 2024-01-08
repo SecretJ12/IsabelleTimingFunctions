@@ -1,5 +1,5 @@
 theory T_Tree23
-  imports "../src/TimingFunction" "HOL-Data_Structures.Tree23_of_List"
+  imports "../src/Define_Time_Fun" "HOL-Data_Structures.Tree23_of_List"
 begin
 
 declare [[time_prefix = "T'_"]]
