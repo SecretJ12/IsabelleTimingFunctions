@@ -40,8 +40,10 @@ theorem "t \<noteq> [] \<Longrightarrow> T'_get_min t = T_get_min t"
   apply (induction rule: T_get_min.induct)
   using T'_root.elims by auto
 
+lemma root: "T'_root t = 0"
+  by (cases t) simp
 theorem get_min_rest: "t \<noteq> [] \<Longrightarrow> T'_get_min_rest t = T_get_min_rest t"
-  by (induction rule: T_get_min_rest.induct) auto
+  by (induction rule: T_get_min_rest.induct) (auto simp: root)
 
 theorem rev: "T'_rev xs = T_rev xs"
   by (induction xs) (auto simp: T_rev_def)
