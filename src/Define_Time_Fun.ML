@@ -15,9 +15,12 @@ val fun_pretty':  Proof.context -> pfunc -> Pretty.T
 val fun_pretty:  Proof.context -> Function.info -> Pretty.T
 val print_timing':  Proof.context -> pfunc -> pfunc -> unit
 val print_timing:  Proof.context -> Function.info -> Function.info -> unit
-(*
-val reg_and_proove_time_func: local_theory -> term -> term list -> 'a converter -> (bool -> local_theory -> term -> 'a -> term) -> bool -> string list -> Function.info * theory
-*)
+
+val reg_and_proove_time_func: theory -> term -> term list -> term option converter
+      -> (bool -> local_theory -> term -> term option -> term)
+      -> bool -> string list -> Function.info * theory
+val reg_time_func: theory -> term -> term list -> term option converter
+      -> (bool -> local_theory -> term -> term option -> term) -> bool -> string list -> theory
 
 val time_dom_tac: Proof.context -> thm -> thm list -> int -> tactic
 
@@ -462,14 +465,6 @@ and reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
         Function.add_function bindings specs fun_config pat_completeness_auto lthy
       end
 
-    (* Register function *)
-    val (_, lthy) =
-      register false
-      handle (ERROR _) =>
-        register true
-           | Match =>
-        register true
-
     (* Context for printing without showing question marks *)
     val print_ctxt = lthy
       |> Config.put show_question_marks false
@@ -481,6 +476,14 @@ and reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
         in
           print_timing' print_ctxt { name=nm, terms=terms, typ=T } { name=timing_name, terms=timing_terms, typ=change_typ T }
         end
+
+    (* Register function *)
+    val (_, lthy) =
+      register false
+      handle (ERROR _) =>
+        register true
+           | Match =>
+        register true
   in
     Local_Theory.exit_global lthy
   end

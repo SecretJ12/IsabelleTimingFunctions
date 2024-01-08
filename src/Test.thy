@@ -65,9 +65,14 @@ lemma "T_is_odd n = t_is_odd n"
 
 text \<open>Example proof\<close>
 lemma "T_is_odd n = 2^(Suc n) - 1"
-  apply (induction n)
-  apply simp
-  by (metis (no_types, opaque_lifting) Suc_1 Suc_eq_plus1_left Suc_mask_eq_exp T_is_odd.simps(2) add_Suc_right add_diff_cancel_left' diff_Suc_Suc mult_2 mult_Suc_right power.simps(2))
+proof (induction n)
+  case (Suc n)
+  have "T_is_odd (Suc n) = 1 + T_is_odd n + T_is_odd n"
+    by simp
+  also have "\<dots> = 2^(Suc (Suc n)) - 1"
+    using Suc.IH by simp
+  finally show ?case.
+qed simp
 
 fun gt_9 :: "nat \<Rightarrow> bool" where
   "gt_9 n = (n > 9)"
