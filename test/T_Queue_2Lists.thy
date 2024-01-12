@@ -1,5 +1,5 @@
 theory T_Queue_2Lists
-  imports "../src/Define_Time_Fun" "HOL-Data_Structures.Queue_2Lists"
+  imports "../src/Define_Time_Function" "HOL-Data_Structures.Queue_2Lists"
 begin
 
 declare [[time_prefix = "T'_"]]

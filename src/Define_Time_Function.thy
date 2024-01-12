@@ -6,7 +6,7 @@ following the translation described in Section 1.5, Running Time, of the book
 Functional Data Structures and Algorithms. A Proof Assistant Approach.
 *)
 
-theory Define_Time_Fun
+theory Define_Time_Function
   imports Main
   keywords "define_time_fun" :: thy_decl
     and    "define_time_function" :: thy_goal
@@ -15,7 +15,7 @@ theory Define_Time_Fun
 begin
 
 ML_file Define_Time_0.ML
-ML_file Define_Time_Fun.ML
+ML_file Define_Time_Function.ML
 
 declare [[time_prefix = "T_"]]
 

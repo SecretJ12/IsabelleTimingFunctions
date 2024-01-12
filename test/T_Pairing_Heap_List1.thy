@@ -1,5 +1,5 @@
 theory T_Pairing_Heap_List1
-  imports "../src/Define_Time_Fun" "Pairing_Heap.Pairing_Heap_List1" "Amortized_Complexity.Pairing_Heap_List1_Analysis"
+  imports "../src/Define_Time_Function" "Pairing_Heap.Pairing_Heap_List1" "Amortized_Complexity.Pairing_Heap_List1_Analysis"
 begin
 
 declare [[time_prefix = "T'_"]]

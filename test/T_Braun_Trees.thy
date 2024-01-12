@@ -1,5 +1,5 @@
 theory T_Braun_Trees
-  imports "../src/Define_Time_Fun" "Priority_Queue_Braun.Priority_Queue_Braun"
+  imports "../src/Define_Time_Function" "Priority_Queue_Braun.Priority_Queue_Braun"
 begin
 
 declare [[time_prefix = "T'_"]]
