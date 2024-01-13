@@ -105,22 +105,21 @@ lemma eval_count_eval: "\<rho>, \<phi> \<turnstile> b \<rightarrow>s (v,t) \<Lon
 
 lemma eval_eval_count':
   assumes "\<forall>i < length vs. \<exists>t. \<rho>, \<phi> \<turnstile> es ! i \<rightarrow>s (vs ! i, t)"
-  and "length es = length vs"
-  shows  "\<exists>ts. length vs = length ts \<and> (\<forall>i. (i < length vs \<longrightarrow> \<rho>, \<phi> \<turnstile> (es!i) \<rightarrow>s (vs!i,ts!i)))"
+    and   "length es = length vs"
+   shows  "\<exists>ts. length vs = length ts \<and> (\<forall>i. (i < length vs \<longrightarrow> \<rho>, \<phi> \<turnstile> (es!i) \<rightarrow>s (vs!i,ts!i)))"
   using assms
 proof (induction vs arbitrary: es)
   case (Cons v vs)
-  then obtain e e' where e: "(e#e') = es" by (metis length_Suc_conv)
-  with Cons(3) have len: "length e' = length vs" by auto
+  then obtain e e' where e: "(e#e') = es" "length e' = length vs" by (metis length_Suc_conv)
 
   from Cons(2) e have "\<forall>i < length vs. \<exists>t. \<rho>, \<phi> \<turnstile> e' ! i \<rightarrow>s (vs ! i, t)"
     by fastforce
-  from Cons(1)[OF this len]
+  from Cons(1)[OF this e(2)]
   obtain ts where ts: "length vs = length ts" "\<forall>i<length vs. \<rho>, \<phi> \<turnstile> e' ! i \<rightarrow>s (vs ! i, ts ! i)"
     by blast
   from Cons(2) obtain t where t: "\<rho>, \<phi> \<turnstile> (es ! 0) \<rightarrow>s ((v # vs) ! 0,t)" by blast
 
-  have "length (v#vs) = length (t#ts)" using len ts by simp
+  have "length (v#vs) = length (t#ts)" using e(2) ts by simp
   moreover
   have "\<forall>i<length (v#vs). \<rho>, \<phi> \<turnstile> es ! i \<rightarrow>s ((v#vs) ! i, (t#ts) ! i)"
     using ts(2) t e
@@ -166,7 +165,7 @@ definition no_time where
   "no_time \<phi> = (\<forall>f. \<phi> (cFun f) = None)"
 
 lemma no_time_trans: "no_time \<phi> \<Longrightarrow> \<phi> f = Some e \<Longrightarrow> (conv \<phi>) f = Some e"
-  by (induction f arbitrary: e) (auto simp: no_time_def)
+  by (cases f) (auto simp: no_time_def)
 lemma eval_no_time_trans: "\<rho>, \<phi> \<turnstile> e \<rightarrow> v \<Longrightarrow> no_time \<phi> \<Longrightarrow> \<rho>, (conv \<phi>) \<turnstile> e \<rightarrow> v"
   by (induction rule: eval.induct) (auto simp: no_time_trans)
 
