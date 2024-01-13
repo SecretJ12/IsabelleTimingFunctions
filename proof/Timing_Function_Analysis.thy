@@ -24,7 +24,7 @@ datatype pfunId = pFun string
 
 text \<open>Defines simple expression\<close>
 datatype exp =
-    App "funId" "exp list"      (infix "$" 100)
+    App funId "exp list"        (infix "$" 100)
   | pApp pfunId "exp list"      (infix "$$" 100)
   | If exp exp exp              ("(IF _/ THEN _/ ELSE _)")
   | Ident nat
@@ -68,7 +68,8 @@ proof (induction arbitrary: v' rule: eval.induct)
     by (metis FE list_eq_iff_nth_eq option.inject)
 next
   case (P es vs \<rho> \<phi> p v)
-  then show ?case by (metis nth_equalityI PE)
+  then show ?case
+    by (metis nth_equalityI PE)
 next
   case (If1 \<rho> \<phi> b v t et f)
   then show ?case using true_def by blast
@@ -83,9 +84,9 @@ inductive eval_count :: "env \<Rightarrow> defs \<Rightarrow> exp \<Rightarrow> 
 cId:   "\<rho>, \<phi> \<turnstile> Ident i \<rightarrow>s (\<rho>!i,0)" |
 cC:    "\<rho>, \<phi> \<turnstile> Const v \<rightarrow>s (v,0)" |
 cF:    "length es = length vs \<Longrightarrow> length es = length ts
-          \<Longrightarrow> (\<And>i. i < length vs \<Longrightarrow> \<rho>, \<phi> \<turnstile> (es!i) \<rightarrow>s (vs!i,ts!i))
+          \<Longrightarrow> (\<forall>i < length vs. \<rho>, \<phi> \<turnstile> (es!i) \<rightarrow>s (vs!i,ts!i))
           \<Longrightarrow> \<phi> f = Some fe \<Longrightarrow> vs, \<phi> \<turnstile> fe \<rightarrow>s (v,t) \<Longrightarrow> \<rho>, \<phi> \<turnstile> (f$ es) \<rightarrow>s (v,1+t+sum_list ts)" |
-cP:    "length es = length vs \<Longrightarrow> length es = length ts \<Longrightarrow> (\<And>i. i < length es \<Longrightarrow> \<rho>, \<phi> \<turnstile> (es ! i) \<rightarrow>s (vs!i,ts!i))
+cP:    "length es = length vs \<Longrightarrow> length es = length ts \<Longrightarrow> (\<forall>i < length es. \<rho>, \<phi> \<turnstile> (es ! i) \<rightarrow>s (vs!i,ts!i))
           \<Longrightarrow> pApp p vs = v \<Longrightarrow> \<rho>, \<phi> \<turnstile> (pFun p$$ es) \<rightarrow>s (v,sum_list ts)" |
 cIf1:  "\<rho>, \<phi> \<turnstile> b \<rightarrow>s (eb,tb) \<Longrightarrow> true eb \<Longrightarrow> \<rho>, \<phi> \<turnstile> t \<rightarrow>s (et,tt)
           \<Longrightarrow> \<rho>, \<phi> \<turnstile> (IF b THEN t ELSE f) \<rightarrow>s (et,tb+tt)" |
@@ -98,6 +99,9 @@ inductive_cases cFE[elim!]: "\<rho>, \<phi> \<turnstile> (f$ es) \<rightarrow>s 
 inductive_cases cPE[elim!]: "\<rho>, \<phi> \<turnstile> (pFun p$$ es) \<rightarrow>s v"
 inductive_cases cIfE[elim!]: "\<rho>, \<phi> \<turnstile> (IF b THEN t ELSE f) \<rightarrow>s v"
 declare eval_count.intros[intro]
+
+lemma eval_count_eval: "\<rho>, \<phi> \<turnstile> b \<rightarrow>s (v,t) \<Longrightarrow> \<rho>, \<phi> \<turnstile> b \<rightarrow> v"
+  by (induction \<rho> \<phi> b "(v,t)" arbitrary: v t rule: eval_count.induct) auto
 
 lemma eval_eval_count':
   assumes "\<forall>i < length vs. \<exists>t. \<rho>, \<phi> \<turnstile> es ! i \<rightarrow>s (vs ! i, t)"
@@ -136,11 +140,8 @@ next
     by (metis cP eval_eval_count')
 qed blast+
 
-lemma eval_count_eval: "\<rho>, \<phi> \<turnstile> b \<rightarrow>s (v,t) \<Longrightarrow> \<rho>, \<phi> \<turnstile> b \<rightarrow> v"
-  by (induction \<rho> \<phi> b "(v,t)" arbitrary: v t rule: eval_count.induct) auto
-
 text \<open>Show that computation result of eval and eval_count is equal\<close>
-theorem  eval_eq_eval_count: "(\<rho>, \<phi> \<turnstile> b \<rightarrow> v) \<longleftrightarrow> (\<exists>t. \<rho>, \<phi> \<turnstile> b \<rightarrow>s (v,t))"
+theorem eval_eq_eval_count: "(\<rho>, \<phi> \<turnstile> b \<rightarrow> v) \<longleftrightarrow> (\<exists>t. \<rho>, \<phi> \<turnstile> b \<rightarrow>s (v,t))"
   using eval_count_eval eval_eval_count by auto
 
 text \<open>\<T> constructs the cost function for an expression\<close>
@@ -150,7 +151,6 @@ fun \<T> :: "exp \<Rightarrow> exp" where
 | "\<T> (IF b THEN t ELSE f) = pFun ''sum''$$ [\<T> b, IF b THEN \<T> t ELSE \<T> f]"
 | "\<T> (pFun _$$ args) = pFun ''sum''$$ map \<T> args"
 | "\<T> (Fun f$ args) = pFun ''sum''$$ (cFun f$ args # map \<T> args)"
-| "\<T> (cFun f$ args) = pFun ''sum''$$ (cFun f$ args # map \<T> args)"
 
 text \<open>cost constructs the cost function for a function given by its expression\<close>
 definition cost :: "exp \<Rightarrow> exp" where
@@ -180,7 +180,7 @@ theorem conv_cor:
 proof (induction \<rho> \<phi> e "(s,t)" arbitrary: s t rule: eval_count.induct)
   case (cF es vs ts \<rho> \<phi> f fe v t)
 
-  from cF(5) cF(8)
+  from cF(4) cF(5) cF(7)
   obtain fn where f_fn: "f = Fun fn"
     by (cases f) (auto simp: no_time_def)
 
@@ -188,32 +188,34 @@ proof (induction \<rho> \<phi> e "(s,t)" arbitrary: s t rule: eval_count.induct)
   then have papp: "pApp ''sum'' (N (1 + t) # ts') = N (1 + t + sum_list ts)"
     by (simp add: comp_def sum)
   
-  from P[of "[Const (N 1), \<T> fe]" "[N 1,N t]" vs "conv \<phi>" "''sum''" "N (1+t)"] cF.hyps(7)[OF cF.prems] sum
+  from P[of "[Const (N 1), \<T> fe]" "[N 1,N t]" vs "conv \<phi>" "''sum''" "N (1+t)"] cF.hyps(6)[OF cF.prems] sum
   have c_fe: "vs, conv \<phi> \<turnstile> cost fe \<rightarrow> N (1 + t)"
     by (simp add: nth_Cons' cost_def)
 
   from cF.hyps(3) eval_no_time_trans[OF _ cF.prems] eval_eq_eval_count
   have "\<forall>i<length vs. \<rho>, conv \<phi> \<turnstile> es ! i \<rightarrow> vs ! i" by blast
 
-  with cF(1) cF(5) c_fe f_fn
+  with cF(1) cF(4) c_fe f_fn
   have "\<rho>, conv \<phi> \<turnstile> cFun fn$ es \<rightarrow> N (1 + t)" by simp
 
-  with cF.hyps(1) cF.hyps(4)[OF _ cF.prems] ts cF.hyps(2)
+  with cF(1) cF(2) cF(3) cF(7) ts
   have "\<forall>i<length (cFun fn$ es # map \<T> es). \<rho>, conv \<phi> \<turnstile> (cFun fn$ es # map \<T> es) ! i \<rightarrow> ((N (1 + t)) # ts') ! i"
     by (simp add: nth_Cons')
 
-  from cF.hyps(2) sum ts f_fn
+  from cF(2) sum ts f_fn
     P[OF _ this papp]
   show ?case by simp
 next
   case (cP es vs ts \<rho> \<phi> p v)
   
   obtain ts' where ts: "ts' = map N ts" by blast
-  then have papp: "pApp ''sum'' ts' = N (sum_list ts)"
+  then have "pApp ''sum'' ts' = N (sum_list ts)"
     by (simp add: comp_def sum)
 
-  with ts cP(2) cP(4)[OF _ cP(6)] sum P[of "map \<T> es" ts' \<rho> "conv \<phi>" "''sum''" "(N o sum_list o map val_to_nat) ts'"]
-  show ?case by simp
+  with ts cP(2) cP(3) cP(5) sum
+  P[of "map \<T> es" ts' \<rho> "conv \<phi>" "''sum''" "(N o sum_list o map val_to_nat) ts'"]
+  show ?case
+    by simp
 next
   case (cIf1 \<rho> \<phi> b eb tb t et tt f)
 
