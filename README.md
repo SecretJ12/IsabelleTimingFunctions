@@ -58,7 +58,7 @@ Functions definitions will be translated by the following schema
 - Recursive function: `T (f (a,b,c,...) = e) = (T_f (a,b,c,...) = 1 + T e)`
 
 Expressions translated to 0 will be neglected when used in another expression.
-Functions called by the specified function will be translated automatically.
+All functions getting called are needed to have their running time function already defined.
 
 With the keyword `equations` you can specify theorems proofing another probably easier version of the terms.
 An example can be found in `test/T_Splay_Tree.thy`
