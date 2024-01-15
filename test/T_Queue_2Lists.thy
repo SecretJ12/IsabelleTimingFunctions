@@ -4,6 +4,10 @@ begin
 
 declare [[time_prefix = "T'_"]]
 
+text \<open>Helper functions\<close>
+define_time_fun itrev
+define_time_fun tl
+
 text \<open>Define timing function\<close>
 define_time_fun norm
 define_time_fun enq

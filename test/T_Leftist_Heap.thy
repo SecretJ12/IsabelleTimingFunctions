@@ -4,6 +4,9 @@ begin
 
 declare [[time_prefix = "T'_"]]
 
+text \<open>Helper functions\<close>
+define_time_fun mht
+define_time_fun node
 
 text \<open>Define timing function\<close>
 define_time_fun merge

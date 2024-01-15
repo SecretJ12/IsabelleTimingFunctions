@@ -18,9 +18,9 @@ val print_timing:  Proof.context -> Function.info -> Function.info -> unit
 
 val reg_and_proove_time_func: theory -> term -> term list -> term option converter
       -> (bool -> local_theory -> term -> term option -> term)
-      -> bool -> string list -> Function.info * theory
+      -> bool -> Function.info * theory
 val reg_time_func: theory -> term -> term list -> term option converter
-      -> (bool -> local_theory -> term -> term option -> term) -> bool -> string list -> theory
+      -> (bool -> local_theory -> term -> term option -> term) -> bool -> theory
 
 val time_dom_tac: Proof.context -> thm -> thm list -> int -> tactic
 
@@ -134,7 +134,6 @@ fun get_r (_ $ (_ $ _ $ r)) = r
 (* Return name of Const *)
 fun Const_name (Const (nm,_)) = SOME nm
   | Const_name _ = NONE
-val Const_name_val = Option.valOf o Const_name
 
 fun time_term ctxt (Const (nm,T)) =
 let
@@ -145,7 +144,7 @@ in
   handle (ERROR _) =>
     case Syntax.read_term ctxt (Long_Name.base_name T_nm)
       of (Const (nm,_)) => SOME (Const (nm,T_T))
-       | _ => NONE
+       | _ => error ("Timing function of " ^ nm ^ " is not defined")
 end
   | time_term _ _ = error "Internal error: No valid function given"
 
@@ -232,7 +231,7 @@ fun fixPartTerms ctxt term t =
       }) t
   end
 
-(* 1.5 Check if function is recursive *)
+(* 2. Check if function is recursive *)
 fun or f (a,b) = f a orelse b
 fun find_rec ctxt term = (walk ctxt term {
           funcc = (fn _ => fn _ => fn f => fn t => fn args => (Const_name t = Const_name term) orelse List.foldr (or f) false args),
@@ -242,31 +241,6 @@ fun find_rec ctxt term = (walk ctxt term {
           letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp orelse f t)
       }) o get_r
 fun is_rec ctxt term = List.foldr (or (find_rec ctxt term)) false
-
-(* 2. Check for undefined timing functions *)
-(* Returns list of all function without a defined timing function *)
-fun check_fun ctxt origin f (func as Const (nm,T)) args =
-let
-  val name_origin = origin |> dest_Const |> fst
-  val f_args = List.concat (map f args)
-in
-  if nm = name_origin orelse Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) (nm,T) then f_args else
-      case time_term ctxt func of SOME _ => f_args
-                                | NONE => func :: f_args
-end
-  | check_fun _ _ f (Free (_,_)) args =
-      List.concat (map f args)
-  | check_fun _ _ _ _ _ = error "Internal error: invalid function"
-(* Returns list of all functions with undefined timing functions *)
-fun find_missing ctxt term terms =
-  List.concat
-    (map (walk ctxt term {
-        funcc = check_fun,
-        constc = (fn ctxt => fn origin => fn f => fn c => (case c of (Const (_,Type ("fun",_))) => check_fun ctxt origin f c [] | _ => [])),
-        ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn t => fn r => f cond @ f t @ f r),
-        casec = (fn _ => fn _ => fn f => fn _ => fn args => List.foldr (fn (t,fs) => rem_abs f t @ fs) [] args),
-        letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp @ f t)
-    }) terms)
 
 (* 3. Convert equations *)
 (* Some Helper *)
@@ -405,16 +379,18 @@ fun get_terms theory (term: term) =
    handle Empty => error "Function or terms of function not found"
 
 (* Register timing function of a given function *)
-fun reg_and_proove_time_func (theory: theory) (term: term) (terms: term list) conv topConv print parents =
-  reg_time_func theory term terms conv topConv false parents
+fun reg_and_proove_time_func (theory: theory) (term: term) (terms: term list) conv topConv print =
+  reg_time_func theory term terms conv topConv false
   |> proove_termination term terms print
-and reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv print parents =
+and reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv print =
   let
     val lthy = Named_Target.theory_init theory
     val _ =
       case time_term lthy term
+            handle (ERROR _) => NONE
         of SOME _ => error ("Timing function already declared: " ^ (Term.term_name term))
          | NONE => ()
+      
 
     val info = SOME (Function.get_info lthy term) handle Empty => NONE
     val is_partial = case info of SOME {is_partial, ...} => is_partial | _ => false
@@ -423,20 +399,8 @@ and reg_time_func (theory: theory) (term: term) (terms: term list) conv topConv 
     (* Exchange Var in types and terms to Free and check constraints *)
     val terms = map (map_aterms fixTerms #> map_types (map_atyps fixTypes) #> fixPartTerms lthy term) terms
 
-    (* 1.5 Check if function is recursive *)
+    (* 2. Check if function is recursive *)
     val is_rec = is_rec lthy term terms
-
-    (* 2. Find missing functions and define them *)
-    fun unique [] = []
-      | unique (x::xs) = x::List.filter (fn x' => (fst (dest_Const x) <> fst (dest_Const x'))) xs
-    val missing_funcs = find_missing lthy term (map get_r terms) |> unique
-    val _ = if List.exists (fn p => List.exists (fn c => Const_name_val c = p) missing_funcs) parents
-        then error "Mutual recursion is not supported" else ()
-    
-    val lthy = List.foldr (fn (f, ctxt) =>
-       reg_and_proove_time_func ctxt f (get_terms ctxt f) conv topConv print (Const_name_val term::parents) |> snd)
-       (Local_Theory.exit_global lthy) missing_funcs
-       |> Named_Target.theory_init
 
     (* 3. Convert every equation
       - Change type of toplevel equation from _ \<Rightarrow> _ \<Rightarrow> bool to nat \<Rightarrow> nat \<Rightarrow> bool
@@ -553,7 +517,7 @@ let
   val (_, lthy') = reg_and_proove_time_func theory fterm
     (case thms of NONE => get_terms theory fterm
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
-    conv topConv true []
+    conv topConv true
 in lthy'
 end
 
@@ -565,7 +529,7 @@ let
   val theory = reg_time_func theory fterm
     (case thms of NONE => get_terms theory fterm
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
-    conv topConv true []
+    conv topConv true
 in theory
 end
 

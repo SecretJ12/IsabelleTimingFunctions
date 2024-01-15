@@ -4,6 +4,11 @@ begin
 
 declare [[time_prefix = "T'_"]]
 
+text \<open>Helper functions\<close>
+define_time_fun rank
+define_time_fun root
+define_time_fun min
+
 text \<open>Define timing function\<close>
 define_time_fun link
 define_time_fun ins_tree

@@ -10,6 +10,13 @@ fun size :: "'a list \<Rightarrow> nat" where
 | "size (_#xs) = size xs + 1"
 define_time_fun size
 
+text \<open>Helper functions\<close>
+define_time_fun take
+define_time_fun drop
+define_time_fun nth
+define_time_fun insort1
+define_time_fun insort
+
 text \<open>Transformation of the functions\<close>
 define_time_fun chop
 text \<open>partition3 uses lambda\<close>

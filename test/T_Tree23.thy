@@ -4,6 +4,9 @@ begin
 
 declare [[time_prefix = "T'_"]]
 
+text \<open>Helper functions\<close>
+define_time_fun leaves
+
 text \<open>Define timing function\<close>
 define_time_fun join_adj
 define_time_fun join_all

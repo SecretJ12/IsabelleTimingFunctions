@@ -45,6 +45,7 @@ fun itrev' :: "'a list \<Rightarrow> 'a list \<Rightarrow> 'a list" where
 | "itrev' (x#xs) ys = itrev' xs (x#ys)"
 fun Itrev' :: "'a list \<Rightarrow> 'a list" where
   "Itrev' xs = itrev' xs []"
+define_time_fun itrev'
 define_time_fun Itrev'
 value "T_Itrev' [a, b, c]"
 lemma T_itrev': "T_itrev' xs ys = 1 + length xs"
@@ -94,6 +95,7 @@ fun mul where
   "mul 0 y = 0"
 | "mul (Suc 0) y = y"
 | "mul (Suc (Suc x)) y = add y (mul (Suc x) y)"
+define_time_fun add
 define_time_fun mul
 
 text \<open>Example proof\<close>
@@ -150,6 +152,7 @@ fun edge_case :: "nat * nat \<Rightarrow> nat" where
 define_time_fun edge_case
 
 text \<open>Allow conversion of library functions\<close>
+define_time_fun append
 define_time_fun rev
 lemma T_append_length: "T_append xs ys = Suc (length xs)"
   by (induction xs) auto
@@ -169,6 +172,7 @@ fun mirror :: "dummyTree \<Rightarrow> dummyTree" where
 | "mirror (Node l r) =
     (let l' = mirror l in let r' = mirror r
     in dummy (Node r' l'))"
+define_time_fun dummy
 define_time_fun mirror
 
 text \<open>Handle pattern matching in let\<close>
@@ -213,6 +217,8 @@ text \<open>Functions with function should be called correctly\<close>
 fun is_zero :: "nat \<Rightarrow> bool" where "is_zero 0 = True" | "is_zero _ = False"
 fun find_zero :: "nat list \<Rightarrow> nat list" where
   "find_zero xs = filter is_zero xs"
+define_time_fun is_zero
+define_time_fun filter
 define_time_fun find_zero
 fun t_is_zero :: "nat \<Rightarrow> nat" where
   "t_is_zero n = 0"
