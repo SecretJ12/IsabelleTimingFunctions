@@ -174,12 +174,24 @@ fun mirror :: "dummyTree \<Rightarrow> dummyTree" where
     in dummy (Node r' l'))"
 define_time_fun dummy
 define_time_fun mirror
+fun t_mirror :: "dummyTree \<Rightarrow> nat" where
+  "t_mirror Leaf = 1"
+| "t_mirror (Node l r) = 1 + T_mirror l + T_mirror r +
+    (let l' = mirror l in let r' = mirror r
+     in T_dummy (Node r' l'))"
+lemma "T_mirror t = t_mirror t"
+  by (induction t) auto
 
 text \<open>Handle pattern matching in let\<close>
 fun first :: "'a * 'b \<Rightarrow> 'a" where
   "first pair =
     (let (a,b) = dummy pair in dummy a)"
 define_time_fun first
+fun t_first :: "'a * 'b \<Rightarrow> nat" where
+  "t_first pair =
+    T_dummy pair + (let (a,b) = dummy pair in T_dummy a)"
+lemma "T_first pair = t_first pair"
+  by auto
 
 fun comp :: "nat \<Rightarrow> nat" where
   "comp n = (n*5 div 7+1)*0"
