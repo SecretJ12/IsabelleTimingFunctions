@@ -268,4 +268,13 @@ define_time_fun func_in_pair
 lemma "T_func_in_pair (n,f) = t_func_in_pair (n,f)"
   by (induction n) auto
 
+fun even :: "nat \<Rightarrow> bool" 
+  and odd :: "nat \<Rightarrow> bool" where
+  "even 0 = True"
+| "odd 0 = False"
+| "even (Suc n) = odd n"
+| "odd (Suc n) = even n"
+
+define_time_fun even odd
+
 end
