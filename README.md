@@ -12,8 +12,8 @@ Repository consists of three parts:
 ## Generator
 The generator implements the following commands
 ```Isabelle
-define_time_0 {NameOfFunction}
-define_time_fun {NameOfFunction} [equations {thms list}]
+define_time_0 {NameOfFunction}+
+define_time_fun {NameOfFunction}+ [equations {thms list}]
 define_time_function {NameOfFunction} [equations {thms list}]
 ```
 The first command marks functions as constants. Therefore they will be translated to 0.
@@ -63,6 +63,9 @@ All functions getting called are needed to have their running time function alre
 With the keyword `equations` you can specify theorems proofing another probably easier version of the terms.
 An example can be found in `test/T_Splay_Tree.thy`
 
+To convert mutual recursive functions, you need to provide all all depending functions.
+This cannot be used to convert multiple not already mutual recursive functions at once.
+
 The prefix for timing functions can be changed with the config string `time_prefix`
 ```Isabelle
 declare [[time_prefix = "T'_"]]
@@ -72,7 +75,6 @@ declare [[time_prefix = "T'_"]]
 The following constructs are not allowed
 - Lambdas
 - Partial applications
-- Mutual recursion
 - Functions as arguments a datatype other than pair
 
 ## Links
