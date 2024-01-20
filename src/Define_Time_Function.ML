@@ -199,19 +199,21 @@ fun fixTerms (Var(ixn,T)) = Free (fst ixn, T)
   | fixTerms t = t
 fun fixTypes (TVar ((t, _), T)) = TFree (t, T)
   | fixTypes t = t
-val _ = Variable.variant_fixes
+
+fun noFun (Type ("fun",_)) = error "Functions in datatypes are not allowed in case constructions"
+  | noFun _ = ()
 fun casecBuildBounds n t = if n > 0 then casecBuildBounds (n-1) (t $ (Bound (n-1))) else t
-fun casecAbs ctxt f n (Type (_,[_,Tr])) (Abs (v,Ta,t)) = Abs (v,Ta,casecAbs ctxt f n Tr t)
+fun casecAbs ctxt f n (Type (_,[T,Tr])) (Abs (v,Ta,t)) = (noFun T; Abs (v,Ta,casecAbs ctxt f n Tr t))
   | casecAbs ctxt f n (Type (Tn,[T,Tr])) t =
-    (case Variable.variant_fixes ["x"] ctxt of ([v],ctxt) =>
+    (noFun T; case Variable.variant_fixes ["x"] ctxt of ([v],ctxt) =>
     (if Tn = "fun" then Abs(v,T,casecAbs ctxt f (n + 1) Tr t) else f t)
     | _ => error "Internal error: could not fix variable")
   | casecAbs _ f n _ t = f (casecBuildBounds n t)
 fun fixCasecCases _ _ _ [t] = [t]
   | fixCasecCases ctxt f (Type (_,[T,Tr])) (t::ts) = casecAbs ctxt f 0 T t :: fixCasecCases ctxt f Tr ts
   | fixCasecCases _ _ _ _ = error "Internal error: invalid case types/terms"
-fun fixCasec ctxt _ f (t as Const (n,T)) args =
-      (check_args "cases" (Syntax.read_term ctxt n,args); build_func (t,fixCasecCases ctxt f T args))
+fun fixCasec ctxt _ f (t as Const (_,T)) args =
+      (check_args "cases" (t,args); build_func (t,fixCasecCases ctxt f T args))
   | fixCasec _ _ _ _ _ = error "Internal error: invalid case term"
 
 fun fixPartTerms ctxt (term: term list) t =
@@ -230,8 +232,7 @@ fun fixPartTerms ctxt (term: term list) t =
                 val f' = if length nms = 0 then
                 (case f (t$exp) of t$_ => t | _ => error "Internal error: case could not be fixed (let)")
                 else f t
-              in
-              (Const (Let_name,expT) $ (f exp) $ build_abs f' nms Ts) end)
+              in (Const (Let_name,expT) $ (f exp) $ build_abs f' nms Ts) end)
       }) t
   end
 
@@ -399,7 +400,11 @@ and reg_time_func (theory: theory) (term: term list) (terms: term list) conv top
 
     (* 1. Fix all terms *)
     (* Exchange Var in types and terms to Free and check constraints *)
-    val terms = map (map_aterms fixTerms #> map_types (map_atyps fixTypes) #> fixPartTerms lthy term) terms
+    val terms = map 
+      (map_aterms fixTerms
+        #> map_types (map_atyps fixTypes)
+        #> fixPartTerms lthy term)
+      terms
 
     (* 2. Check if function is recursive *)
     val is_rec = is_rec lthy term terms
