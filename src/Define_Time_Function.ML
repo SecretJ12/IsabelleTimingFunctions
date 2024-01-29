@@ -337,16 +337,21 @@ fun ifc ctxt origin f _ cond tt ft =
        (SOME ((Const (If_name, @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ rcond $ (opt_term tt) $ (opt_term ft)))) (f cond)
   end
 
+val _ = Term.is_dependent;
+
 fun letc_change_typ (Type ("fun", [T1, Type ("fun", [T2, _])])) = (Type ("fun", [T1, Type ("fun", [change_typ T2, HOLogic.natT])]))
   | letc_change_typ _ = error "Internal error: invalid let type"
 fun letc _ _ f expT exp nms Ts t =
     plus (f exp)
-    (if length nms = 0 (* In case of "length nms = 0" a case expression is used to split up a type *)
-    (* Add (Bound 0) to receive a fully evaluated function, which can be handled by casec
-       Strip of (Bound 0) after conversion *)
-    then (case f (t $ Bound 0) of SOME (t' $ Bound 0) => SOME (Const (Let_name, letc_change_typ expT) $ exp $ t')
-                                | _ => NONE)
-    else (case f t of SOME t' => SOME (Const (Let_name, letc_change_typ expT) $ exp $ build_abs t' nms Ts)
+    (if length nms = 0 (* In case of "length nms = 0" the expression got reducted
+                          Here we need Bound 0 to gain non-partial application *)
+    then (case f (t $ Bound 0) of SOME (t' $ Bound 0) =>
+                                 (SOME (Const (Let_name, letc_change_typ expT) $ exp $ t'))
+                                  (* Expression is not used and can therefore let be dropped *)
+                                | SOME t' => SOME t'
+                                | NONE => NONE)
+    else (case f t of SOME t' =>
+      SOME (if Term.is_dependent t' then Const (Let_name, letc_change_typ expT) $ exp $ build_abs t' nms Ts else Term.subst_bounds([exp],t'))
                                | NONE => NONE))
 
 (* The converter for timing functions given to the walker *)
