@@ -1,5 +1,5 @@
 theory T_Binomial_Heap    
-  imports "../src/Define_Time_Function" "HOL-Data_Structures.Binomial_Heap"
+  imports "HOL-Data_Structures.Define_Time_Function" "HOL-Data_Structures.Binomial_Heap"
 begin
 
 declare [[time_prefix = "T'_"]]

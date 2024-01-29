@@ -1,5 +1,5 @@
 theory T_Tree23
-  imports "../src/Define_Time_Function" "HOL-Data_Structures.Tree23_of_List"
+  imports "HOL-Data_Structures.Define_Time_Function" "HOL-Data_Structures.Tree23_of_List"
 begin
 
 declare [[time_prefix = "T'_"]]
@@ -23,6 +23,6 @@ lemma leaves: "T'_leaves xs = T_leaves xs"
   by (induction xs) auto
 
 theorem "T'_tree23_of_list xs = T_tree23_of_list xs"
-  by (induction xs) (auto simp: leaves T_tree23_of_list_def join_all)
+  by (induction xs) (auto simp: join_all)
 
 end

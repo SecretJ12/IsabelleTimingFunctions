@@ -1,5 +1,5 @@
 theory T_Skew_Heap
-  imports "../src/Define_Time_Function" "Skew_Heap.Skew_Heap" "Amortized_Complexity.Skew_Heap_Analysis"
+  imports "HOL-Data_Structures.Define_Time_Function" "Skew_Heap.Skew_Heap" "Amortized_Complexity.Skew_Heap_Analysis"
 begin
 
 declare [[time_prefix = "T'_"]]

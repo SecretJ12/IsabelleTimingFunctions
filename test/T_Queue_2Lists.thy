@@ -1,5 +1,5 @@
 theory T_Queue_2Lists
-  imports "../src/Define_Time_Function" "HOL-Data_Structures.Queue_2Lists"
+  imports "HOL-Data_Structures.Define_Time_Function" "HOL-Data_Structures.Queue_2Lists"
 begin
 
 declare [[time_prefix = "T'_"]]
@@ -27,9 +27,11 @@ theorem "T'_enq a q = T_enq a q"
   apply (cases q)
   using T'_tl.elims by (auto simp: norm)
 
+lemma tl: "T'_tl xs = T_tl xs"
+  by (induction xs) auto
+
 theorem "T'_deq q = T_deq q"
-  apply (cases q)
-  using T'_tl.elims by (auto simp: norm)
+  by (cases q) (auto simp: norm tl)
 
 theorem "0 < length fs \<Longrightarrow> T'_first (fs,rs) = 0"
   by (cases fs) auto

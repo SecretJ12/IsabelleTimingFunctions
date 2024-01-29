@@ -1,5 +1,5 @@
 theory T_List
-  imports "../src/Define_Time_Function" "HOL-Data_Structures.Time_Funs"
+  imports "HOL-Data_Structures.Define_Time_Function" "HOL-Data_Structures.Time_Funs"
 begin
 
 declare [[time_prefix = "T'_"]]

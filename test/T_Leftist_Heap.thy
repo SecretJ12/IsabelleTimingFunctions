@@ -1,5 +1,5 @@
 theory T_Leftist_Heap
-  imports "../src/Define_Time_Function" "HOL-Data_Structures.Leftist_Heap"
+  imports "HOL-Data_Structures.Define_Time_Function" "HOL-Data_Structures.Leftist_Heap"
 begin
 
 declare [[time_prefix = "T'_"]]
@@ -22,7 +22,7 @@ lemma node: "T'_node l a r = 0"
 theorem merge: "T'_merge x y = T_merge x y"
   by (induction rule: T_merge.induct) (auto simp: node mht)
 theorem "T'_insert x y = T_insert x y"
-  by (auto simp: merge T_insert_def)
+  by (auto simp: merge)
 theorem "T'_del_min t  = T_del_min t"
   by (cases t) (auto simp: merge)
 
