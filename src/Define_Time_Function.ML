@@ -64,7 +64,6 @@ let
   val header_content =
      List.concat (prepHeadCont (hd names,hd typs) :: map ((fn l => Pretty.str "\nand " :: l) o prepHeadCont) (ListPair.zip (tl names, tl typs)));
   val header_end = Pretty.str " where\n  ";
-  val _ = List.map
   val header = [header_beg] @ header_content @ [header_end];
   fun separate sep prts =
     flat (Library.separate [Pretty.str sep] (map single prts));
@@ -337,8 +336,6 @@ fun ifc ctxt origin f _ cond tt ft =
        (SOME ((Const (If_name, @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ rcond $ (opt_term tt) $ (opt_term ft)))) (f cond)
   end
 
-val _ = Term.is_dependent;
-
 fun letc_change_typ (Type ("fun", [T1, Type ("fun", [T2, _])])) = (Type ("fun", [T1, Type ("fun", [change_typ T2, HOLogic.natT])]))
   | letc_change_typ _ = error "Internal error: invalid let type"
 fun letc _ _ f expT exp nms Ts t =
@@ -351,7 +348,8 @@ fun letc _ _ f expT exp nms Ts t =
                                 | SOME t' => SOME t'
                                 | NONE => NONE)
     else (case f t of SOME t' =>
-      SOME (if Term.is_dependent t' then Const (Let_name, letc_change_typ expT) $ exp $ build_abs t' nms Ts else Term.subst_bounds([exp],t'))
+      SOME (if Term.is_dependent t' then Const (Let_name, letc_change_typ expT) $ exp $ build_abs t' nms Ts
+                                    else Term.subst_bounds([exp],t'))
                                | NONE => NONE))
 
 (* The converter for timing functions given to the walker *)
