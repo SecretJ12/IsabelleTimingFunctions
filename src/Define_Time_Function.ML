@@ -445,6 +445,7 @@ and reg_time_func (theory: theory) (term: term list) (terms: term list) conv top
     val print_ctxt = lthy
       |> Config.put show_question_marks false
       |> Config.put show_sorts false (* Change it for debugging *)
+    val print_ctxt =  List.foldl (fn (term, ctxt) => Variable.add_fixes_implicit term ctxt) print_ctxt (term@timing_terms)
     (* Print result if print *)
     val _ = if not print then () else
         let
