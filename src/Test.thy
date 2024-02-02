@@ -206,10 +206,6 @@ define_time_fun divide
 lemma "T_divide a b = 0"
   by simp
 
-ML \<open>
-HOLogic.mk_fst (Free ("a",@{typ "nat*nat"}))
-\<close>
-
 text \<open>Should be able to translate functions with function as argument\<close>
 fun t_map :: "(('a \<Rightarrow> 'b) * ('a \<Rightarrow> nat)) \<Rightarrow> 'a list \<Rightarrow> nat" where
   "t_map f [] = 1"

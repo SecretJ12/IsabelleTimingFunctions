@@ -4,8 +4,8 @@ theory T_Check
     T_Selection T_Skew_Heap T_Splay_Tree T_Tree23
 begin
 
-(* Some checks got kinda useless as the timing function in were
-   replaced by this implementation in the newest devel version.
-   In order to test it properly use old definitions *)
+(* Some checks got kinda useless as the timing function in the
+   source were replaced by this implementation in the newest
+   devel version. In order to test it properly use old definitions *)
 
 end
