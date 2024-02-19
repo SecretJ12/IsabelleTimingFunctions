@@ -8,7 +8,7 @@ fun sum :: "nat \<Rightarrow> nat" where
 | "sum (Suc n) = Suc n + sum n"
 define_time_fun sum
 
-lemma "sum n = (Suc n)*n div 2"
+lemma "T_sum n = Suc n"
   by (induction n) auto
 
 
@@ -29,6 +29,8 @@ termination sorry
 
 define_time_0 "(dvd)"
 define_time_fun collatz
+
+value "T_collatz 2"
 
 
 
@@ -60,6 +62,14 @@ define_time_fun even odd
 
 text \<open>Explicitely specify equations\<close>
 define_time_fun cmp
+thm splay.simps(1)
+thm splay_code
 define_time_fun splay equations splay.simps(1) splay_code
+
+
+
+
+
+
 
 end
