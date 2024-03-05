@@ -16,11 +16,10 @@ val fun_pretty:  Proof.context -> Function.info -> Pretty.T
 val print_timing':  Proof.context -> pfunc -> pfunc -> unit
 val print_timing:  Proof.context -> Function.info -> Function.info -> unit
 
-val reg_and_proove_time_func: theory -> term list -> term list -> term option converter
-      -> (bool -> local_theory -> term list -> term option -> term)
+val reg_and_proove_time_func: theory -> term list -> term list
       -> bool -> Function.info * theory
-val reg_time_func: theory -> term list -> term list -> term option converter
-      -> (bool -> local_theory -> term list -> term option -> term) -> bool -> theory
+val reg_time_func: theory -> term list -> term list
+      -> bool -> theory
 
 val time_dom_tac: Proof.context -> thm -> thm list -> int -> tactic
 
@@ -363,16 +362,16 @@ val converter : term option converter = {
 fun top_converter is_rec _ _ = opt_term o (fn exp => plus exp (if is_rec then SOME one else NONE))
 
 (* Use converter to convert right side of a term *)
-fun to_time ctxt origin converter top_converter term =
-  top_converter ctxt origin (walk ctxt origin converter term)
+fun to_time ctxt origin is_rec term =
+  top_converter is_rec ctxt origin (walk ctxt origin converter term)
 
 (* Converts a term to its running time version *)
-fun convert_term ctxt (origin: term list) conv topConv (pT $ (Const (eqN, _) $ l $ r)) =
+fun convert_term ctxt (origin: term list) is_rec (pT $ (Const (eqN, _) $ l $ r)) =
       pT
       $ (Const (eqN, @{typ "nat \<Rightarrow> nat \<Rightarrow> bool"})
         $ (build_func ((walk_func l []) |>> (fun_to_time ctxt origin) |>> Option.valOf ||> conv_args ctxt origin))
-        $ (to_time ctxt origin conv topConv r))
-  | convert_term _ _ _ _ _ = error "Internal error: invalid term to convert"
+        $ (to_time ctxt origin is_rec r))
+  | convert_term _ _ _ _ = error "Internal error: invalid term to convert"
 
 (* 4. Tactic to prove "f_dom n" *)
 fun time_dom_tac ctxt induct_rule domintros =
@@ -389,10 +388,10 @@ fun get_terms theory (term: term) =
    handle Empty => error "Function or terms of function not found"
 
 (* Register timing function of a given function *)
-fun reg_and_proove_time_func (theory: theory) (term: term list) (terms: term list) conv topConv print =
-  reg_time_func theory term terms conv topConv false
+fun reg_and_proove_time_func (theory: theory) (term: term list) (terms: term list) print =
+  reg_time_func theory term terms false
   |> proove_termination term terms print
-and reg_time_func (theory: theory) (term: term list) (terms: term list) conv topConv print =
+and reg_time_func (theory: theory) (term: term list) (terms: term list) print =
   let
     val lthy = Named_Target.theory_init theory
     val _ =
@@ -417,7 +416,7 @@ and reg_time_func (theory: theory) (term: term list) (terms: term list) conv top
       - On left side change name of function to timing function
       - Convert right side of equation with conversion schema
     *)
-    val timing_terms = map (convert_term lthy term conv (topConv is_rec)) terms
+    val timing_terms = map (convert_term lthy term is_rec) terms
 
     (* 4. Register function and prove termination *)
     val names = map Term.term_name term
@@ -523,26 +522,26 @@ and proove_termination (term: term list) terms print (theory: theory) =
   end
 
 (* Convert function into its timing function (called by command) *)
-fun reg_time_fun_cmd (funcs, thms) conv topConv (theory: theory) =
+fun reg_time_fun_cmd (funcs, thms) (theory: theory) =
 let
   val ctxt = Proof_Context.init_global theory
   val fterms = map (Syntax.read_term ctxt) funcs
   val (_, lthy') = reg_and_proove_time_func theory fterms
     (case thms of NONE => get_terms theory (hd fterms)
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
-    conv topConv true
+    true
 in lthy'
 end
 
 (* Convert function into its timing function (called by command) with termination proof provided by user*)
-fun reg_time_function_cmd (funcs, thms) conv topConv (theory: theory) =
+fun reg_time_function_cmd (funcs, thms) (theory: theory) =
 let
   val ctxt = Proof_Context.init_global theory
   val fterms = map (Syntax.read_term ctxt) funcs
   val theory = reg_time_func theory fterms
     (case thms of NONE => get_terms theory (hd fterms)
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
-    conv topConv true
+    true
 in theory
 end
 
@@ -550,10 +549,10 @@ val parser = (Scan.repeat1 Parse.prop) -- (Scan.option (Parse.keyword_improper "
 
 val _ = Outer_Syntax.command @{command_keyword "time_fun"}
   "Defines runtime function of a function"
-  (parser >> (fn p => Toplevel.theory (reg_time_fun_cmd p converter top_converter)))
+  (parser >> (fn p => Toplevel.theory (reg_time_fun_cmd p)))
 
 val _ = Outer_Syntax.command @{command_keyword "time_function"}
   "Defines runtime function of a function"
-  (parser >> (fn p => Toplevel.theory (reg_time_function_cmd p converter top_converter)))
+  (parser >> (fn p => Toplevel.theory (reg_time_function_cmd p)))
 
 end
