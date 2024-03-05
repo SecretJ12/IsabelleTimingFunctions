@@ -316,10 +316,10 @@ fun casec _ _ f (Const (t,T)) args =
   if not (casecIsCase T) then error "Internal error: invalid case type" else
     let val (nconst, args') = casecArgs f args in
       plus
+        (f (List.last args))
         (if nconst then
           SOME (build_func (Const (t,casecTyp T), args'))
          else NONE)
-        (f (List.last args))
     end
   | casec _ _ _ _ _ = error "Internal error: invalid case term"
 
@@ -332,8 +332,8 @@ fun ifc ctxt origin f _ cond tt ft =
     val tt = f tt
     val ft = f ft
   in
-    plus (case (tt,ft) of (NONE, NONE) => NONE | _ =>
-       (SOME ((Const (If_name, @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ rcond $ (opt_term tt) $ (opt_term ft)))) (f cond)
+    plus (f cond) (case (tt,ft) of (NONE, NONE) => NONE | _ =>
+       (SOME ((Const (If_name, @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ rcond $ (opt_term tt) $ (opt_term ft))))
   end
 
 fun letc_change_typ (Type ("fun", [T1, Type ("fun", [T2, _])])) = (Type ("fun", [T1, Type ("fun", [change_typ T2, HOLogic.natT])]))
@@ -548,11 +548,11 @@ end
 
 val parser = (Scan.repeat1 Parse.prop) -- (Scan.option (Parse.keyword_improper "equations" -- Parse.thms1 >> snd))
 
-val _ = Outer_Syntax.command @{command_keyword "define_time_fun"}
+val _ = Outer_Syntax.command @{command_keyword "time_fun"}
   "Defines runtime function of a function"
   (parser >> (fn p => Toplevel.theory (reg_time_fun_cmd p converter top_converter)))
 
-val _ = Outer_Syntax.command @{command_keyword "define_time_function"}
+val _ = Outer_Syntax.command @{command_keyword "time_function"}
   "Defines runtime function of a function"
   (parser >> (fn p => Toplevel.theory (reg_time_function_cmd p converter top_converter)))
 
