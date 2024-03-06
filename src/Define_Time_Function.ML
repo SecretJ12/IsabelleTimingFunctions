@@ -402,7 +402,7 @@ and reg_time_func (theory: theory) (term: term list) (terms: term list) print =
 
     (* 1. Fix all terms *)
     (* Exchange Var in types and terms to Free and check constraints *)
-    val terms = map 
+    val terms = map
       (map_aterms fixTerms
         #> map_types (map_atyps fixTypes)
         #> fixPartTerms lthy term)
@@ -521,6 +521,12 @@ and proove_termination (term: term list) terms print (theory: theory) =
     (time_info, Local_Theory.exit_global lthy')
   end
 
+fun fix_definition (Const ("Pure.eq", _) $ l $ r) = Const ("HOL.Trueprop", @{typ "bool \<Rightarrow> prop"})
+      $ (Const ("HOL.eq", @{typ "bool \<Rightarrow> bool \<Rightarrow> bool"}) $ l $ r)
+  | fix_definition t = t
+fun check_definition [t] = [t]
+  | check_definition _ = error "Only a single defnition is allowed"
+
 (* Convert function into its timing function (called by command) *)
 fun reg_time_fun_cmd (funcs, thms) (theory: theory) =
 let
@@ -545,6 +551,18 @@ let
 in theory
 end
 
+(* Convert function into its timing function (called by command) *)
+fun reg_time_definition_cmd (funcs, thms) (theory: theory) =
+let
+  val ctxt = Proof_Context.init_global theory
+  val fterms = map (Syntax.read_term ctxt) funcs
+  val (_, lthy') = reg_and_proove_time_func theory fterms
+    (case thms of NONE => get_terms theory (hd fterms) |> check_definition |> map fix_definition
+                | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
+    true
+in lthy'
+end
+
 val parser = (Scan.repeat1 Parse.prop) -- (Scan.option (Parse.keyword_improper "equations" -- Parse.thms1 >> snd))
 
 val _ = Outer_Syntax.command @{command_keyword "time_fun"}
@@ -554,5 +572,9 @@ val _ = Outer_Syntax.command @{command_keyword "time_fun"}
 val _ = Outer_Syntax.command @{command_keyword "time_function"}
   "Defines runtime function of a function"
   (parser >> (fn p => Toplevel.theory (reg_time_function_cmd p)))
+
+val _ = Outer_Syntax.command @{command_keyword "time_definition"}
+  "Defines runtime function of a definition"
+  (parser >> (fn p => Toplevel.theory (reg_time_definition_cmd p)))
 
 end
