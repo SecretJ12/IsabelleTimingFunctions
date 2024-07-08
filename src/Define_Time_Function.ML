@@ -136,6 +136,9 @@ fun get_r (_ $ (_ $ _ $ r)) = r
 (* Return name of Const *)
 fun Const_name (Const (nm,_)) = SOME nm
   | Const_name _ = NONE
+fun contains l e = exists (fn e' => e' = e) l
+fun unique [] = []
+  | unique (x::xs) = if contains xs x then unique xs else x::unique xs
 
 fun time_term ctxt (Const (nm,T)) =
 let
@@ -149,6 +152,15 @@ in
        | _ => error ("Timing function of " ^ nm ^ " is not defined")
 end
   | time_term _ _ = error "Internal error: No valid function given"
+fun time_term' ctxt (Const (nm,_)) =
+let
+  val T_nm = fun_name_to_time ctxt nm
+in
+  case Syntax.read_term ctxt (Long_Name.base_name T_nm)
+    of (Const c) => SOME (Const c)
+     | _ => error ("Timing function of " ^ nm ^ " is not defined")
+end
+  | time_term' _ _ = error "Internal error: No valid function given"
 
 type 'a converter = {
   constc : local_theory -> term list -> (term -> 'a) -> term -> 'a,
@@ -244,6 +256,122 @@ fun find_rec ctxt term = (walk ctxt term {
           letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp orelse f t)
       }) o get_r
 fun is_rec ctxt (term: term list) = List.foldr (or (find_rec ctxt term)) false
+
+(* 2.5 Check for higher-order function if original function is used *)
+fun check_orig_used ctxt t i =
+let
+  val T_t =
+    case time_term' ctxt t
+      of (SOME (Const (_, T_t))) => T_t
+       | _ => error "Internal error: Invalid return type of time_term"
+  fun get_i 0 (Type ("fun", [t, _])) = t
+    | get_i i (Type ("fun", [_, T])) = get_i (i-1) T
+    | get_i _ _ = error "Internal error: Invalid type - expected function"
+  val T = get_i i T_t
+in
+  case T
+    of (Type ("fun", _)) => false
+     | (Type ("Product_Type.prod", _)) => true
+     | _ => error "Internal error: Invalid type - expected function or pair"
+end
+
+fun find_used_fst' ctxt term t =
+let
+  (* filter frees passed to functions using them *)
+  fun filter_passed _ _ [] = []
+    | filter_passed t i ((f as Free (_, Type ("fun",_)))::args) = 
+        (if check_orig_used ctxt t i then [f] else []) @ filter_passed t (i+1) args
+    | filter_passed t i (_::args) = filter_passed t (i+1) args
+  fun find_used_inner ctxt term = (walk ctxt term {
+      funcc = (fn _ => fn _ => fn f => fn t => fn args =>
+          (case t of (free as Free _) => if null args then [] else [free] | _ => [])
+          @ List.foldr (fn (l,r) => f l @ r) [] args
+          @ (if contains term t then [] else filter_passed t 0 args)),
+      constc = (K o K o K o K) [],
+      ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn tt => fn tf => f cond @ f tt @ f tf),
+      casec = (fn _ => fn _ => fn f => fn t => fn cs => f t @ List.foldr (fn (l,r) => f l @ r) [] cs),
+      letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp @ f t)
+  })
+  val frees = (walk ctxt term {
+          funcc = (fn _ => fn _ => fn f => fn t => fn args =>
+              (if
+                (case t of (Const par) => not (Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) par)
+                         | _ => false)
+              then
+                List.foldr (fn (l,r) => find_used_inner ctxt term l @ r) [] args
+              else
+                List.foldr (fn (l,r) => f l @ r) [] args)
+              @ (if contains term t then [] else filter_passed t 0 args)),
+          constc = (K o K o K o K) [],
+          ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn tt => fn tf => f cond @ f tt @ f tf),
+          casec = (fn _ => fn _ => fn f => fn t => fn cs => f t @ List.foldr (fn (l,r) => f l @ r) [] cs),
+          letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp @ f t)
+      }) (get_r t)
+  val (ident, args) = walk_func (get_l t) []
+  fun build _ [] = []
+    | build i (a::args) = (if contains frees a then [(ident, i)] else []) @ build (i+1) args
+in
+  build 0 args
+end
+fun find_used_snd' ctxt term t =
+let
+  (* filter frees passed to currently defined functions *)
+  fun filter_passed _ _ [] = []
+    | filter_passed t i ((f as Free (_, Type ("fun",_)))::args) = 
+        (if contains term t then [(f,t,i)] else []) @ filter_passed t (i+1) args
+    | filter_passed t i (_::args) = filter_passed t (i+1) args
+  val frees = (walk ctxt term {
+          funcc = (fn _ => fn _ => fn f => fn t => fn args =>
+
+              (if
+                (case t of (Const par) => not (Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) par)
+                         | _ => false)
+              then
+                filter_passed t 0 args
+              else
+                [])
+              @ List.foldr (fn (l,r) => f l @ r) [] args),
+          constc = (K o K o K o K) [],
+          ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn tt => fn tf => f cond @ f tt @ f tf),
+          casec = (fn _ => fn _ => fn f => fn t => fn cs => f t @ List.foldr (fn (l,r) => f l @ r) [] cs),
+          letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp @ f t)
+      }) (get_r t)
+  val (ident, args) = walk_func (get_l t) []
+  fun filter_help a (f, c, _) = (a = f andalso ident <> c)
+  fun map_help i (_, f, j) = ((ident, i), (f, j))
+  fun build _ [] = []
+    | build i (a::args) =
+        (frees
+        |> filter (filter_help a)
+        |> map (map_help i)) @ build (i+1) args
+in
+  build 0 args
+end
+fun find_used_fst ctxt term terms =
+  terms
+  |> List.map (find_used_fst' ctxt term)
+  |> List.foldr (fn (a,b) => a@b) []
+fun find_used_snd ctxt term terms =
+  terms
+  |> List.map (find_used_snd' ctxt term)
+  |> List.foldr (fn (a,b) => a@b) []
+fun find_used ctxt term terms =
+let
+  val used = find_used_fst ctxt term terms
+  val dep = find_used_snd ctxt term terms
+  fun find_used used [] = used
+    | find_used used ((l,r)::dep) =
+        find_used (if contains used r then (l::used) else used) dep
+  fun repeat used =
+    let
+      val used' = find_used used dep |> unique
+    in
+      if length used = length used' then used else repeat used'
+    end
+in
+  repeat used
+end
+
 
 (* 3. Convert equations *)
 (* Some Helper *)
@@ -412,6 +540,8 @@ and reg_time_func (theory: theory) (term: term list) (terms: term list) print =
 
     (* 2. Check if function is recursive *)
     val is_rec = is_rec lthy term terms
+    (* 2.5 Check for higher-order function if original function is used *)
+    val orig_used = find_used lthy term terms |> @{print}
 
     (* 3. Convert every equation
       - Change type of toplevel equation from _ \<Rightarrow> _ \<Rightarrow> bool to nat \<Rightarrow> nat \<Rightarrow> bool
