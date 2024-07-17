@@ -150,6 +150,8 @@ fun get_r (_ $ (_ $ _ $ r)) = r
 (* Return name of Const *)
 fun Const_name (Const (nm,_)) = SOME nm
   | Const_name _ = NONE
+fun is_Used (Type ("Product_Type.prod", _)) = true
+  | is_Used _ = false
 
 fun time_term ctxt (Const (nm,T)) =
 let
@@ -159,7 +161,15 @@ in
 (SOME (Syntax.check_term ctxt (Const (T_nm,T_T))))
   handle (ERROR _) =>
     case Syntax.read_term ctxt (Long_Name.base_name T_nm)
-      of (Const (nm,T_T)) => SOME (Const (nm,T_T))
+      of (Const (nm,T_T)) =>
+        let
+          fun col_Used i (Type ("fun", [Type ("fun", _), Ts])) (Type ("fun", [T', Ts'])) =
+            (if is_Used T' then [i] else []) @ col_Used (i+1) Ts Ts'
+            | col_Used i (Type ("fun", [_, Ts])) (Type ("fun", [_, Ts'])) = col_Used (i+1) Ts Ts'
+            | col_Used _ _ _ = []
+        in
+          SOME (Const (nm,change_typ' (col_Used 0 T T_T) 0 T))
+        end
        | _ => error ("Timing function of " ^ nm ^ " is not defined")
 end
   | time_term _ _ = error "Internal error: No valid function given"
@@ -270,8 +280,6 @@ fun find_rec ctxt term = (walk ctxt term {
 fun is_rec ctxt (term: term list) = List.foldr (or (find_rec ctxt term)) false
 
 (* 2.2 Check for higher-order function if original function is used *)
-fun is_Used (Type ("Product_Type.prod", _)) = true
-  | is_Used _ = false
 fun check_orig_used ctxt t i =
 let
   val T_t =
@@ -301,9 +309,12 @@ let
           @ (if contains term t then [] else filter_passed t 0 args)),
       constc = (K o K o K o K) [],
       ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn tt => fn tf => f cond @ f tt @ f tf),
-      casec = (fn _ => fn _ => fn f => fn t => fn cs => f t @ List.foldr (fn (l,r) => f l @ r) [] cs),
+      casec = (fn _ => fn _ => fn f => fn t => fn cs => List.foldr (fn (l,r) => f l @ r) [] cs),
       letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp @ f t)
   })
+  fun remove_last [_] = []
+    | remove_last (x::xs) = x :: remove_last xs
+    | remove_last [] = error "Internal error: Nil"
   val frees = (walk ctxt term {
           funcc = (fn _ => fn _ => fn f => fn t => fn args =>
               (if
@@ -315,9 +326,9 @@ let
                 List.foldr (fn (l,r) => f l @ r) [] args)
               @ (if contains term t then [] else filter_passed t 0 args)),
           constc = (K o K o K o K) [],
-          ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn tt => fn tf => f cond @ f tt @ f tf),
-          casec = (fn _ => fn _ => fn f => fn t => fn cs => f t @ List.foldr (fn (l,r) => f l @ r) [] cs),
-          letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp @ f t)
+          ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn tt => fn tf => find_used_inner ctxt term cond @ f tt @ f tf),
+          casec = (fn _ => fn _ => fn f => fn _ => fn cs => find_used_inner ctxt term (List.last cs) @ List.foldr (fn (l,r) => f l @ r) [] (remove_last cs)),
+          letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => find_used_inner ctxt term exp @ f t)
       }) (get_r t)
   val (ident, args) = walk_func (get_l t) []
   fun build _ [] = []
@@ -334,7 +345,6 @@ let
     | filter_passed t i (_::args) = filter_passed t (i+1) args
   val frees = (walk ctxt term {
           funcc = (fn _ => fn _ => fn f => fn t => fn args =>
-
               (if
                 (case t of (Const par) => not (Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) par)
                          | _ => false)
@@ -345,7 +355,7 @@ let
               @ List.foldr (fn (l,r) => f l @ r) [] args),
           constc = (K o K o K o K) [],
           ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn tt => fn tf => f cond @ f tt @ f tf),
-          casec = (fn _ => fn _ => fn f => fn t => fn cs => f t @ List.foldr (fn (l,r) => f l @ r) [] cs),
+          casec = (fn _ => fn _ => fn f => fn t => fn cs => List.foldr (fn (l,r) => f l @ r) [] cs),
           letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp @ f t)
       }) (get_r t)
   val (ident, args) = walk_func (get_l t) []
@@ -394,6 +404,8 @@ fun plus (SOME a) (SOME b) = SOME (Const (@{const_name "Groups.plus"}, plusTyp) 
   | plus NONE NONE = NONE
 fun opt_term NONE = HOLogic.zero
   | opt_term (SOME t) = t
+fun use_origin (Free (nm, T as Type ("fun",_))) = HOLogic.mk_fst (Free (nm,HOLogic.mk_prodT (T, change_typ T)))
+  | use_origin t = t
 
 (* Converting of function term *)
 fun fun_to_time ctxt orig_used _ (origin: term list) (func as Const (nm,T)) =
@@ -463,19 +475,19 @@ end
 fun casecIsCase (Type (n1, [_,Type (n2, _)])) = (n1 = "fun" andalso n2 = "fun")
   | casecIsCase _ = false
 fun casecLastTyp (Type (n, [T1,T2])) = Type (n, [T1, change_typ T2])
-  | casecLastTyp _ = error "Internal error: invalid case type"
+  | casecLastTyp _ = error "Internal error: Invalid case type"
 fun casecTyp (Type (n, [T1, T2])) =
       Type (n, [change_typ T1, (if casecIsCase T2 then casecTyp else casecLastTyp) T2])
-  | casecTyp _ = error "Internal error: invalid case type"
+  | casecTyp _ = error "Internal error: Invalid case type"
 fun casecAbs f (Abs (v,Ta,t)) = (case casecAbs f t of (nconst,t) => (nconst,Abs (v,Ta,t)))
   | casecAbs f t = (case f t of NONE => (false,HOLogic.zero) | SOME t => (true,t))
-fun casecArgs _ [t] = (false, [t])
+fun casecArgs _ [t] = (false, [map_aterms use_origin t])
   | casecArgs f (t::ar) =
     (case casecAbs f t of (nconst, tt) => 
       casecArgs f ar ||> (fn ar => tt :: ar) |>> (if nconst then K true else I))
-  | casecArgs _ _ = error "Internal error: invalid case term"
+  | casecArgs _ _ = error "Internal error: Invalid case term"
 fun casec _ _ f (Const (t,T)) args =
-  if not (casecIsCase T) then error "Internal error: invalid case type" else
+  if not (casecIsCase T) then error "Internal error: Invalid case type" else
     let val (nconst, args') = casecArgs f args in
       plus
         (f (List.last args))
@@ -483,14 +495,12 @@ fun casec _ _ f (Const (t,T)) args =
           SOME (build_func (Const (t,casecTyp T), args'))
          else NONE)
     end
-  | casec _ _ _ _ _ = error "Internal error: invalid case term"
+  | casec _ _ _ _ _ = error "Internal error: Invalid case term"
 
 (* Handle if terms -> drop the term if true and false terms are zero *)
-fun ifc ctxt origin f _ cond tt ft =
+fun ifc _ _ f _ cond tt ft =
   let
-    fun use_origin _ _ (Free (nm, T as Type ("fun",_))) = HOLogic.mk_fst (Free (nm,HOLogic.mk_prodT (T, change_typ T)))
-      | use_origin _ _ t = t
-    val rcond = map_aterms (use_origin ctxt origin) cond
+    val rcond = map_aterms use_origin cond
     val tt = f tt
     val ft = f ft
   in
@@ -505,14 +515,14 @@ fun letc _ _ f expT exp nms Ts t =
     (if length nms = 0 (* In case of "length nms = 0" the expression got reducted
                           Here we need Bound 0 to gain non-partial application *)
     then (case f (t $ Bound 0) of SOME (t' $ Bound 0) =>
-                                 (SOME (Const (Let_name, letc_change_typ expT) $ exp $ t'))
+                                 (SOME (Const (Let_name, letc_change_typ expT) $ (map_aterms use_origin exp) $ t'))
                                   (* Expression is not used and can therefore let be dropped *)
                                 | SOME t' => SOME t'
                                 | NONE => NONE)
     else (case f t of SOME t' =>
-      SOME (if Term.is_dependent t' then Const (Let_name, letc_change_typ expT) $ exp $ build_abs t' nms Ts
+      SOME (if Term.is_dependent t' then Const (Let_name, letc_change_typ expT) $ (map_aterms use_origin exp) $ build_abs t' nms Ts
                                     else Term.subst_bounds([exp],t'))
-                               | NONE => NONE))
+    | NONE => NONE))
 
 (* The converter for timing functions given to the walker *)
 fun converter orig_used used : term option converter = {
@@ -585,7 +595,7 @@ and reg_time_func (theory: theory) (term: term list) (terms: term list) print =
     (* 2.1 Check if function is recursive *)
     val is_rec = is_rec lthy term terms
     (* 2.2 Check for higher-order function if original function is used *)
-    val orig_used = find_used lthy term terms
+    val orig_used = find_used lthy term terms |> @{print}
 
     (* 3. Convert every equation
       - Change type of toplevel equation from _ \<Rightarrow> _ \<Rightarrow> bool to nat \<Rightarrow> nat \<Rightarrow> bool
