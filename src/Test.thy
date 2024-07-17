@@ -118,7 +118,7 @@ function terminationB :: \<open>nat \<Rightarrow> bool\<close> where
 \<open>terminationB n = (if n \<le> 1 then True else if (Suc 1) dvd n then terminationB (n div (Suc 1)) else terminationB ((Suc (Suc 1)) * n + 1))\<close>
   by auto
 termination sorry
-time_0 "(dvd)"
+time_fun_0 "(dvd)"
 time_fun terminationB
 
 text \<open>The command should handle case expressions\<close>
@@ -207,18 +207,18 @@ lemma "T_divide a b = 0"
   by simp
 
 text \<open>Should be able to translate functions with function as argument\<close>
-fun t_map :: "(('a \<Rightarrow> 'b) * ('a \<Rightarrow> nat)) \<Rightarrow> 'a list \<Rightarrow> nat" where
+fun t_map :: "('a \<Rightarrow> nat) \<Rightarrow> 'a list \<Rightarrow> nat" where
   "t_map f [] = 1"
-| "t_map f (x#xs) = 1 + snd f x + t_map f xs"
+| "t_map f (x#xs) = 1 + f x + t_map f xs"
 time_fun map
 fun leng :: "'a list \<Rightarrow> nat" where
   "leng [] = 0" | "leng (x#xs) = Suc (leng xs)"
 time_fun leng
 lemma leng: "T_leng xs = Suc (length xs)"
   by (induction xs) auto
-lemma "T_map (leng,T_leng) xs = Suc (length xs) + length xs + foldr ((+) o length) xs 0"
+lemma "T_map T_leng xs = Suc (length xs) + length xs + foldr ((+) o length) xs 0"
   by (induction xs) (auto simp: leng)
-lemma "T_map (leng,T_leng) xs = t_map (leng,T_leng) xs"
+lemma "T_map T_leng xs = t_map T_leng xs"
   by (induction xs) auto
 
 text \<open>Functions with function should be called correctly\<close>
@@ -241,6 +241,20 @@ lemma "t_find_zero xs = T_find_zero xs"
   apply (induction xs)
   using T_is_zero.elims by (auto simp: filter)
 
+fun filter' :: "('a \<Rightarrow> bool) \<Rightarrow> 'a list \<Rightarrow> 'a list" where
+  "filter' _ [] = []"
+| "filter' f (x#xs) =
+  (case f x of True \<Rightarrow> x # filter' f xs
+             | False \<Rightarrow> filter' f xs)"
+time_fun filter'
+
+fun I where
+  "I x = x"
+time_fun I
+fun let_test where
+  "let_test f x = (let y = f x in I y)"
+time_function let_test
+
 text \<open>More functions to test functions as arguments\<close>
 fun revmap' :: "('a \<Rightarrow> 'b) \<Rightarrow> 'a list \<Rightarrow> 'b list \<Rightarrow> 'b list" where
   "revmap' f [] ys = ys"
@@ -253,16 +267,6 @@ lemma revmap': "T_revmap' (f,T_f) xs ys = Suc (length xs) + foldr ((+) o T_f) xs
   by (induction xs arbitrary: ys) auto
 lemma "T_revmap (f,T_f) xs = Suc (length xs) + foldr ((+) o T_f) xs 0"
   by (simp add: revmap')
-
-fun func_in_pair :: "(nat * (nat \<Rightarrow> bool)) \<Rightarrow> bool" where
-  "func_in_pair (0, f) = f 0"
-| "func_in_pair (Suc n, f) = f n"
-fun t_func_in_pair :: "(nat * ((nat \<Rightarrow> bool) * (nat \<Rightarrow> nat))) \<Rightarrow> nat" where
-  "t_func_in_pair (0, f) = snd f 0"
-| "t_func_in_pair (Suc n, f) = snd f n"
-time_fun func_in_pair
-lemma "T_func_in_pair (n,f) = t_func_in_pair (n,f)"
-  by (induction n) auto
 
 fun even :: "nat \<Rightarrow> bool"
   and odd :: "nat \<Rightarrow> bool" where
