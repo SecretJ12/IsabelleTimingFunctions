@@ -85,6 +85,13 @@ fun print_timing ctxt (oinfo: Function.info) (tinfo: Function.info) =
 val If_name = @{const_name "HOL.If"}
 val Let_name = @{const_name "HOL.Let"}
 
+fun contains l e = exists (fn e' => e' = e) l
+fun unique [] = []
+  | unique (x::xs) = if contains xs x then unique xs else x::unique xs
+fun zip [] [] = []
+  | zip (x::xs) (y::ys) = (x, y) :: zip xs ys
+  | zip _ _ = error "Internal error: Cannot zip lists with differing size"
+
 (* returns true if it's an if term *)
 fun is_if (Const (n,_)) = (n = If_name)
   | is_if _ = false
@@ -96,10 +103,15 @@ fun is_let (Const (n,_)) = (n = Let_name)
   | is_let _ = false
 (* change type of original function to new type (_ \<Rightarrow> ... \<Rightarrow> _ to _ \<Rightarrow> ... \<Rightarrow> nat)
     and replace all function arguments f with (t*T_f) *)
+fun change_typ' orig_used i (Type ("fun", [T1, T2])) = 
+      Type ("fun", [check_for_fun' (contains orig_used i) T1, change_typ' orig_used (i+1) T2])
+  | change_typ' _ _ _ = HOLogic.natT
+and check_for_fun' true (f as Type ("fun", [_,_])) = HOLogic.mk_prodT (f, change_typ' [] 0 f)
+  | check_for_fun' false (f as Type ("fun", [_,_])) = change_typ' [] 0 f
+  | check_for_fun' _ t = t
 fun change_typ (Type ("fun", [T1, T2])) = Type ("fun", [check_for_fun T1, change_typ T2])
   | change_typ _ = HOLogic.natT
 and check_for_fun (f as Type ("fun", [_,_])) = HOLogic.mk_prodT (f, change_typ f)
-  | check_for_fun (Type ("Product_Type.prod", [t1,t2])) = HOLogic.mk_prodT (check_for_fun t1, check_for_fun t2)
   | check_for_fun f = f
 (* Convert string name of function to its timing equivalent *)
 fun fun_name_to_time ctxt name =
@@ -136,9 +148,6 @@ fun get_r (_ $ (_ $ _ $ r)) = r
 (* Return name of Const *)
 fun Const_name (Const (nm,_)) = SOME nm
   | Const_name _ = NONE
-fun contains l e = exists (fn e' => e' = e) l
-fun unique [] = []
-  | unique (x::xs) = if contains xs x then unique xs else x::unique xs
 
 fun time_term ctxt (Const (nm,T)) =
 let
@@ -151,7 +160,7 @@ in
       of (Const (nm,_)) => SOME (Const (nm,T_T))
        | _ => error ("Timing function of " ^ nm ^ " is not defined")
 end
-  | time_term _ _ = error "Internal error: No valid function given"
+  | time_term _ t = (@{print} t; error "Internal error: No valid function given")
 fun time_term' ctxt (Const (nm,_)) =
 let
   val T_nm = fun_name_to_time ctxt nm
@@ -160,7 +169,7 @@ in
     of (Const c) => SOME (Const c)
      | _ => error ("Timing function of " ^ nm ^ " is not defined")
 end
-  | time_term' _ _ = error "Internal error: No valid function given"
+  | time_term' _ t = (@{print} t; error "Internal error: No valid function given")
 
 type 'a converter = {
   constc : local_theory -> term list -> (term -> 'a) -> term -> 'a,
@@ -210,7 +219,7 @@ fun fixTerms (Var(ixn,T)) = Free (fst ixn, T)
 fun fixTypes (TVar ((t, _), T)) = TFree (t, T)
   | fixTypes t = t
 
-fun noFun (Type ("fun",_)) = error "Functions in datatypes are not allowed in case constructions"
+fun noFun (Type ("fun", _)) = error "Functions in datatypes are not allowed in case constructions"
   | noFun _ = ()
 fun casecBuildBounds n t = if n > 0 then casecBuildBounds (n-1) (t $ (Bound (n-1))) else t
 fun casecAbs ctxt f n (Type (_,[T,Tr])) (Abs (v,Ta,t)) = (noFun T; Abs (v,Ta,casecAbs ctxt f n Tr t))
@@ -246,7 +255,8 @@ fun fixPartTerms ctxt (term: term list) t =
       }) t
   end
 
-(* 2. Check if function is recursive *)
+(* 2. Check for properties about the function *)
+(* 2.1 Check if function is recursive *)
 fun or f (a,b) = f a orelse b
 fun find_rec ctxt term = (walk ctxt term {
           funcc = (fn _ => fn _ => fn f => fn t => fn args => List.exists (fn term => Const_name t = Const_name term) term orelse List.foldr (or f) false args),
@@ -257,7 +267,7 @@ fun find_rec ctxt term = (walk ctxt term {
       }) o get_r
 fun is_rec ctxt (term: term list) = List.foldr (or (find_rec ctxt term)) false
 
-(* 2.5 Check for higher-order function if original function is used *)
+(* 2.2 Check for higher-order function if original function is used *)
 fun check_orig_used ctxt t i =
 let
   val T_t =
@@ -277,8 +287,10 @@ end
 
 fun find_used_fst' ctxt term t =
 let
-  (* filter frees passed to functions using them *)
+  (* filter frees passed to functions (never called on currently defined functions *)
   fun filter_passed _ _ [] = []
+    | filter_passed (Free _) _ ((Free (_, Type ("fun",_)))::_) =
+        error "Passed function may not contain another function"
     | filter_passed t i ((f as Free (_, Type ("fun",_)))::args) = 
         (if check_orig_used ctxt t i then [f] else []) @ filter_passed t (i+1) args
     | filter_passed t i (_::args) = filter_passed t (i+1) args
@@ -538,9 +550,10 @@ and reg_time_func (theory: theory) (term: term list) (terms: term list) print =
         #> fixPartTerms lthy term)
       terms
 
-    (* 2. Check if function is recursive *)
+    (* 2. Find properties about the function *)
+    (* 2.1 Check if function is recursive *)
     val is_rec = is_rec lthy term terms
-    (* 2.5 Check for higher-order function if original function is used *)
+    (* 2.2 Check for higher-order function if original function is used *)
     val orig_used = find_used lthy term terms |> @{print}
 
     (* 3. Convert every equation
@@ -579,9 +592,16 @@ and reg_time_func (theory: theory) (term: term list) (terms: term list) print =
     val _ = if not print then () else
         let
           val nms = map (fst o dest_Const) term
+          val used =
+            term
+            |> map (fn t =>
+                orig_used
+                |> filter (fn (c, _) => c = t)
+                |> map snd
+                  )
           val typs = map (snd o dest_Const) term
         in
-          print_timing' print_ctxt { names=nms, terms=terms, typs=typs } { names=timing_names, terms=timing_terms, typs=map change_typ typs }
+          print_timing' print_ctxt { names=nms, terms=terms, typs=typs } { names=timing_names, terms=timing_terms, typs=map (fn (used, typ) => change_typ' used 0 typ) (zip used typs) }
         end
 
     (* Register function *)
