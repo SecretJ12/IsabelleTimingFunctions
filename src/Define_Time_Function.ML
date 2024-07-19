@@ -595,7 +595,7 @@ and reg_time_func (theory: theory) (term: term list) (terms: term list) print =
     (* 2.1 Check if function is recursive *)
     val is_rec = is_rec lthy term terms
     (* 2.2 Check for higher-order function if original function is used *)
-    val orig_used = find_used lthy term terms |> @{print}
+    val orig_used = find_used lthy term terms
 
     (* 3. Convert every equation
       - Change type of toplevel equation from _ \<Rightarrow> _ \<Rightarrow> bool to nat \<Rightarrow> nat \<Rightarrow> bool
