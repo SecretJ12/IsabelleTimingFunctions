@@ -320,16 +320,16 @@ in
   if Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) (nm,T) then NONE else
     time_term ctxt func
 end
-  | fun_to_time _ _ used _ (f as Free (nm,T)) = SOME (
+  | fun_to_time ctxt _ used _ (f as Free (nm,T)) = SOME (
       if used f then HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
-      else Free (nm, change_typ T)
+      else Free (Config.get ctxt bprefix ^ nm, change_typ T)
       )
   | fun_to_time _ _ _ _ _ = error "Internal error: invalid function to convert"
 
 (* Convert arguments of left side of a term *)
-fun conv_arg _ used _ (f as Free (nm,T as Type("fun",_))) =
+fun conv_arg ctxt used _ (f as Free (nm,T as Type("fun",_))) =
     if used f then Free (nm, HOLogic.mk_prodT (T, change_typ' (K false) 0 T))
-    else Free (nm, change_typ' (K false) 0 T)
+    else Free (Config.get ctxt bprefix ^ nm, change_typ' (K false) 0 T)
   | conv_arg ctxt _ origin (f as Const (_, Type("fun",_))) =
       (error "weird case i don't understand TODO"; HOLogic.mk_prod (f, fun_to_time ctxt (K false) (K false) origin f |> Option.valOf))
   | conv_arg _ _ _ x = x
@@ -343,11 +343,11 @@ fun funcc_use_origin _ _ used (f as Free (nm, T as Type ("fun",_))) =
     else error "Internal error: Error in used detection"
   | funcc_use_origin _ _ _ t = t
 fun funcc_conv_arg ctxt origin used _ (t as (_ $ _)) = map_aterms (funcc_use_origin ctxt origin used) t
-  | funcc_conv_arg _ _ used u (f as Free (nm, T as Type ("fun",_))) =
+  | funcc_conv_arg ctxt _ used u (f as Free (nm, T as Type ("fun",_))) =
       if used f then
         if u then Free (nm, HOLogic.mk_prodT (T, change_typ T))
         else HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
-      else Free (nm, change_typ T)
+      else Free (Config.get ctxt bprefix ^ nm, change_typ T)
   | funcc_conv_arg ctxt origin _ true (f as Const (_,T as Type ("fun",_))) =
   (Const (@{const_name "Product_Type.Pair"},
       Type ("fun", [T,Type ("fun", [change_typ T, HOLogic.mk_prodT (T,change_typ T)])]))
