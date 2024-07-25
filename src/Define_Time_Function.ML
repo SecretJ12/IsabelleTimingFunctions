@@ -86,16 +86,12 @@ val If_name = @{const_name "HOL.If"}
 val Let_name = @{const_name "HOL.Let"}
 
 fun contains l e = exists (fn e' => e' = e) l
-fun unique [] = []
-  | unique (x::xs) = if contains xs x then unique xs else x::unique xs
 fun zip [] [] = []
   | zip (x::xs) (y::ys) = (x, y) :: zip xs ys
   | zip _ _ = error "Internal error: Cannot zip lists with differing size"
-fun used_for_const orig_used t =
-  orig_used
-      |> filter (fn (c, _) => c = t)
-      |> map snd
-      
+fun index [] _ = 0
+  | index (x::xs) el = (if x = el then 0 else 1 + index xs el)
+fun used_for_const orig_used t i = orig_used (t,i)
 
 (* returns true if it's an if term *)
 fun is_if (Const (n,_)) = (n = If_name)
@@ -108,13 +104,13 @@ fun is_let (Const (n,_)) = (n = Let_name)
   | is_let _ = false
 (* change type of original function to new type (_ \<Rightarrow> ... \<Rightarrow> _ to _ \<Rightarrow> ... \<Rightarrow> nat)
     and replace all function arguments f with (t*T_f) *)
-fun change_typ' orig_used i (Type ("fun", [T1, T2])) = 
-      Type ("fun", [check_for_fun' (contains orig_used i) T1, change_typ' orig_used (i+1) T2])
+fun change_typ' used i (Type ("fun", [T1, T2])) = 
+      Type ("fun", [check_for_fun' (used i) T1, change_typ' used (i+1) T2])
   | change_typ' _ _ _ = HOLogic.natT
-and check_for_fun' true (f as Type ("fun", [_,_])) = HOLogic.mk_prodT (f, change_typ' [] 0 f)
-  | check_for_fun' false (f as Type ("fun", [_,_])) = change_typ' [] 0 f
+and check_for_fun' true (f as Type ("fun", [_,_])) = HOLogic.mk_prodT (f, change_typ' (K false) 0 f)
+  | check_for_fun' false (f as Type ("fun", [_,_])) = change_typ' (K false) 0 f
   | check_for_fun' _ t = t
-val change_typ = change_typ' [] 0
+val change_typ = change_typ' (K false) 0
 (* Convert string name of function to its timing equivalent *)
 fun fun_name_to_time ctxt name =
 let
@@ -168,20 +164,11 @@ in
             | col_Used i (Type ("fun", [_, Ts])) (Type ("fun", [_, Ts'])) = col_Used (i+1) Ts Ts'
             | col_Used _ _ _ = []
         in
-          SOME (Const (nm,change_typ' (col_Used 0 T T_T) 0 T))
+          SOME (Const (nm,change_typ' (contains (col_Used 0 T T_T)) 0 T))
         end
        | _ => error ("Timing function of " ^ nm ^ " is not defined")
 end
   | time_term _ _ = error "Internal error: No valid function given"
-fun time_term' ctxt (Const (nm,_)) =
-let
-  val T_nm = fun_name_to_time ctxt nm
-in
-  case Syntax.read_term ctxt (Long_Name.base_name T_nm)
-    of (Const c) => SOME (Const c)
-     | _ => error ("Timing function of " ^ nm ^ " is not defined")
-end
-  | time_term' _ _ = (error "Internal error: No valid function given")
 
 type 'a converter = {
   constc : local_theory -> term list -> (term -> 'a) -> term -> 'a,
@@ -280,119 +267,35 @@ fun find_rec ctxt term = (walk ctxt term {
 fun is_rec ctxt (term: term list) = List.foldr (or (find_rec ctxt term)) false
 
 (* 2.2 Check for higher-order function if original function is used *)
-fun check_orig_used ctxt t i =
+fun find_used' ctxt term t T_t =
 let
-  val T_t =
-    case time_term' ctxt t
-      of (SOME (Const (_, T_t))) => T_t
-       | _ => error "Internal error: Invalid return type of time_term"
-  fun get_i 0 (Type ("fun", [t, _])) = t
-    | get_i i (Type ("fun", [_, T])) = get_i (i-1) T
-    | get_i _ _ = error "Internal error: Invalid type - expected function"
-in
-  is_Used (get_i i T_t)
-end
+  val (ident, _) = walk_func (get_l t) []
+  val (T_ident, T_args) = walk_func (get_l T_t) []
 
-fun find_used_fst' ctxt term t =
-let
-  (* filter frees passed to functions (never called on currently defined functions *)
-  fun filter_passed _ _ [] = []
-    | filter_passed (Free _) _ ((Free (_, Type ("fun",_)))::_) =
-        error "Passed function may not contain another function"
-    | filter_passed t i ((f as Free (_, Type ("fun",_)))::args) = 
-        (if check_orig_used ctxt t i then [f] else []) @ filter_passed t (i+1) args
-    | filter_passed t i (_::args) = filter_passed t (i+1) args
-  fun find_used_inner ctxt term = (walk ctxt term {
-      funcc = (fn _ => fn _ => fn f => fn t => fn args =>
-          (case t of (free as Free _) => if null args then [] else [free] | _ => [])
-          @ List.foldr (fn (l,r) => f l @ r) [] args
-          @ (if contains term t then [] else filter_passed t 0 args)),
-      constc = (K o K o K o K) [],
-      ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn tt => fn tf => f cond @ f tt @ f tf),
-      casec = (fn _ => fn _ => fn f => fn t => fn cs => List.foldr (fn (l,r) => f l @ r) [] cs),
-      letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp @ f t)
-  })
-  fun remove_last [_] = []
-    | remove_last (x::xs) = x :: remove_last xs
-    | remove_last [] = error "Internal error: Nil"
-  val frees = (walk ctxt term {
+  fun filter_passed [] = []
+    | filter_passed ((f as Free (_, Type ("Product_Type.prod",[Type ("fun",_), Type ("fun", _)])))::args) = 
+        f :: filter_passed args
+    | filter_passed (_::args) = filter_passed args
+  val frees' = (walk ctxt term {
           funcc = (fn _ => fn _ => fn f => fn t => fn args =>
-              (if
-                (case t of (Const par) => not (Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) par)
-                         | _ => false)
-              then
-                List.foldr (fn (l,r) => find_used_inner ctxt term l @ r) [] args
-              else
-                List.foldr (fn (l,r) => f l @ r) [] args)
-              @ (if contains term t then [] else filter_passed t 0 args)),
-          constc = (K o K o K o K) [],
-          ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn tt => fn tf => find_used_inner ctxt term cond @ f tt @ f tf),
-          casec = (fn _ => fn _ => fn f => fn _ => fn cs => find_used_inner ctxt term (List.last cs) @ List.foldr (fn (l,r) => f l @ r) [] (remove_last cs)),
-          letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => find_used_inner ctxt term exp @ f t)
-      }) (get_r t)
-  val (ident, args) = walk_func (get_l t) []
-  fun build _ [] = []
-    | build i (a::args) = (if contains frees a then [(ident, i)] else []) @ build (i+1) args
-in
-  build 0 args
-end
-fun find_used_snd' ctxt term t =
-let
-  (* filter frees passed to currently defined functions *)
-  fun filter_passed _ _ [] = []
-    | filter_passed t i ((f as Free (_, Type ("fun",_)))::args) = 
-        (if contains term t then [(f,t,i)] else []) @ filter_passed t (i+1) args
-    | filter_passed t i (_::args) = filter_passed t (i+1) args
-  val frees = (walk ctxt term {
-          funcc = (fn _ => fn _ => fn f => fn t => fn args =>
-              (if
-                (case t of (Const par) => not (Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) par)
-                         | _ => false)
-              then
-                filter_passed t 0 args
-              else
-                [])
-              @ List.foldr (fn (l,r) => f l @ r) [] args),
+              (case t of (Const ("Product_Type.prod.snd", _)) => []
+                  | _ => (if t = T_ident then [] else filter_passed args)
+                    @ List.foldr (fn (l,r) => f l @ r) [] args)),
           constc = (K o K o K o K) [],
           ifc = (fn _ => fn _ => fn f => fn _ => fn cond => fn tt => fn tf => f cond @ f tt @ f tf),
-          casec = (fn _ => fn _ => fn f => fn t => fn cs => List.foldr (fn (l,r) => f l @ r) [] cs),
+          casec = (fn _ => fn _ => fn f => fn _ => fn cs => List.foldr (fn (l,r) => f l @ r) [] cs),
           letc = (fn _ => fn _ => fn f => fn _ => fn exp => fn _ => fn _ => fn t => f exp @ f t)
-      }) (get_r t)
-  val (ident, args) = walk_func (get_l t) []
-  fun filter_help a (f, c, _) = (a = f andalso ident <> c)
-  fun map_help i (_, f, j) = ((ident, i), (f, j))
-  fun build _ [] = []
-    | build i (a::args) =
-        (frees
-        |> filter (filter_help a)
-        |> map (map_help i)) @ build (i+1) args
+      }) (get_r T_t)
+  fun build _ [] _ = false
+    | build i (a::args) item =
+        (if item = (ident,i) then contains frees' a else build (i+1) args item)
 in
-  build 0 args
+  build 0 T_args
 end
-fun find_used_fst ctxt term terms =
-  terms
-  |> List.map (find_used_fst' ctxt term)
-  |> List.foldr (fn (a,b) => a@b) []
-fun find_used_snd ctxt term terms =
-  terms
-  |> List.map (find_used_snd' ctxt term)
-  |> List.foldr (fn (a,b) => a@b) []
-fun find_used ctxt term terms =
-let
-  val used = find_used_fst ctxt term terms
-  val dep = find_used_snd ctxt term terms
-  fun find_used used [] = used
-    | find_used used ((l,r)::dep) =
-        find_used (if contains used r then (l::used) else used) dep
-  fun repeat used =
-    let
-      val used' = find_used used dep |> unique
-    in
-      if length used = length used' then used else repeat used'
-    end
-in
-  repeat used
-end
+fun find_used ctxt term terms T_terms =
+  zip terms T_terms
+  |> List.map (fn (t, T_t) => find_used' ctxt term t T_t)
+  |> List.foldr (fn (f,g) => fn item => f item orelse g item) (K false)
 
 
 (* 3. Convert equations *)
@@ -418,17 +321,17 @@ in
     time_term ctxt func
 end
   | fun_to_time _ _ used _ (f as Free (nm,T)) = SOME (
-      if contains used f then HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
+      if used f then HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
       else Free (nm, change_typ T)
       )
   | fun_to_time _ _ _ _ _ = error "Internal error: invalid function to convert"
 
 (* Convert arguments of left side of a term *)
 fun conv_arg _ used _ (f as Free (nm,T as Type("fun",_))) =
-    if contains used f then Free (nm, HOLogic.mk_prodT (T, change_typ' [] 0 T))
-    else Free (nm, change_typ' [] 0 T)
+    if used f then Free (nm, HOLogic.mk_prodT (T, change_typ' (K false) 0 T))
+    else Free (nm, change_typ' (K false) 0 T)
   | conv_arg ctxt _ origin (f as Const (_, Type("fun",_))) =
-      (error "weird case i don't understand TODO"; HOLogic.mk_prod (f, fun_to_time ctxt [] [] origin f |> Option.valOf))
+      (error "weird case i don't understand TODO"; HOLogic.mk_prod (f, fun_to_time ctxt (K false) (K false) origin f |> Option.valOf))
   | conv_arg _ _ _ x = x
 fun conv_args ctxt used origin = map (conv_arg ctxt used origin)
 
@@ -436,21 +339,21 @@ fun conv_args ctxt used origin = map (conv_arg ctxt used origin)
 fun build_zero (Type ("fun", [T, R])) = Abs ("x", T, build_zero R)
   | build_zero _ = zero
 fun funcc_use_origin _ _ used (f as Free (nm, T as Type ("fun",_))) =
-    if contains used f then HOLogic.mk_fst (Free (nm,HOLogic.mk_prodT (T, change_typ T)))
+    if used f then HOLogic.mk_fst (Free (nm,HOLogic.mk_prodT (T, change_typ T)))
     else error "Internal error: Error in used detection"
   | funcc_use_origin _ _ _ t = t
 fun funcc_conv_arg ctxt origin used _ (t as (_ $ _)) = map_aterms (funcc_use_origin ctxt origin used) t
   | funcc_conv_arg _ _ used u (f as Free (nm, T as Type ("fun",_))) =
-      if contains used f then
+      if used f then
         if u then Free (nm, HOLogic.mk_prodT (T, change_typ T))
         else HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
       else Free (nm, change_typ T)
   | funcc_conv_arg ctxt origin _ true (f as Const (_,T as Type ("fun",_))) =
   (Const (@{const_name "Product_Type.Pair"},
       Type ("fun", [T,Type ("fun", [change_typ T, HOLogic.mk_prodT (T,change_typ T)])]))
-    $ f $ (Option.getOpt (fun_to_time ctxt [] [] origin f, build_zero T)))
+    $ f $ (Option.getOpt (fun_to_time ctxt (K false) (K false) origin f, build_zero T)))
   | funcc_conv_arg ctxt origin _ false (f as Const (_,T as Type ("fun",_))) =
-      Option.getOpt (fun_to_time ctxt [] [] origin f, build_zero T)
+      Option.getOpt (fun_to_time ctxt (K false) (K false) origin f, build_zero T)
   | funcc_conv_arg _ _ _ _ t = t
 
 fun funcc_conv_args _ _ _ _ [] = []
@@ -505,6 +408,7 @@ fun ifc _ _ f _ cond tt ft =
     val ft = f ft
   in
     plus (f cond) (case (tt,ft) of (NONE, NONE) => NONE | _ =>
+       if tt = ft then tt else
        (SOME ((Const (If_name, @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ rcond $ (opt_term tt) $ (opt_term ft))))
   end
 
@@ -545,9 +449,9 @@ fun convert_term ctxt (origin: term list) is_rec orig_used (pT $ (Const (eqN, _)
 let
   val (l' as (l_const, l_params)) = walk_func l []
   val used =
-    l_const     
+    l_const
     |> used_for_const orig_used
-    |> map (fn i => List.nth (l_params, i))
+    |> (fn f => fn n => f (index l_params n))
 in
       pT
       $ (Const (eqN, @{typ "nat \<Rightarrow> nat \<Rightarrow> bool"})
@@ -594,15 +498,22 @@ and reg_time_func (theory: theory) (term: term list) (terms: term list) print =
     (* 2. Find properties about the function *)
     (* 2.1 Check if function is recursive *)
     val is_rec = is_rec lthy term terms
-    (* 2.2 Check for higher-order function if original function is used *)
-    val orig_used = find_used lthy term terms
 
     (* 3. Convert every equation
       - Change type of toplevel equation from _ \<Rightarrow> _ \<Rightarrow> bool to nat \<Rightarrow> nat \<Rightarrow> bool
       - On left side change name of function to timing function
       - Convert right side of equation with conversion schema
     *)
-    val timing_terms = map (convert_term lthy term is_rec orig_used) terms
+    fun convert used = map (convert_term lthy term is_rec used)
+    fun repeat T_terms =
+      let
+        val orig_used = find_used lthy term terms T_terms
+        val T_terms' = convert orig_used terms
+      in
+        if T_terms' <> T_terms then repeat T_terms' else T_terms'
+      end
+    val T_terms = repeat (convert (K true) terms)
+    val orig_used = find_used lthy term terms T_terms
 
     (* 4. Register function and prove termination *)
     val names = map Term.term_name term
@@ -610,7 +521,7 @@ and reg_time_func (theory: theory) (term: term list) (terms: term list) print =
     val bindings = map (fn nm => (Binding.name nm, NONE, NoSyn)) timing_names
     fun pat_completeness_auto ctxt =
       Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
-    val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) timing_terms
+    val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) T_terms
 
     (* For partial functions sequential=true is needed in order to support them
        We need sequential=false to support the automatic proof of termination over dom
@@ -628,7 +539,7 @@ and reg_time_func (theory: theory) (term: term list) (terms: term list) print =
     val print_ctxt = lthy
       |> Config.put show_question_marks false
       |> Config.put show_sorts false (* Change it for debugging *)
-    val print_ctxt =  List.foldl (fn (term, ctxt) => Variable.add_fixes_implicit term ctxt) print_ctxt (term@timing_terms)
+    val print_ctxt =  List.foldl (fn (term, ctxt) => Variable.add_fixes_implicit term ctxt) print_ctxt (term @ T_terms)
     (* Print result if print *)
     val _ = if not print then () else
         let
@@ -636,7 +547,7 @@ and reg_time_func (theory: theory) (term: term list) (terms: term list) print =
           val used = map (used_for_const orig_used) term
           val typs = map (snd o dest_Const) term
         in
-          print_timing' print_ctxt { names=nms, terms=terms, typs=typs } { names=timing_names, terms=timing_terms, typs=map (fn (used, typ) => change_typ' used 0 typ) (zip used typs) }
+          print_timing' print_ctxt { names=nms, terms=terms, typs=typs } { names=timing_names, terms=T_terms, typs=map (fn (used, typ) => change_typ' used 0 typ) (zip used typs) }
         end
 
     (* Register function *)
