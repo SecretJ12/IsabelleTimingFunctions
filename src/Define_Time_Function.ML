@@ -16,10 +16,10 @@ val fun_pretty:  Proof.context -> Function.info -> Pretty.T
 val print_timing':  Proof.context -> pfunc -> pfunc -> unit
 val print_timing:  Proof.context -> Function.info -> Function.info -> unit
 
-val reg_and_proove_time_func: theory -> term list -> term list
-      -> bool -> Function.info * theory
-val reg_time_func: theory -> term list -> term list
-      -> bool -> theory
+val reg_and_proove_time_func: local_theory -> term list -> term list
+      -> bool -> Function.info * local_theory
+val reg_time_func: local_theory -> term list -> term list
+      -> bool -> local_theory
 
 val time_dom_tac: Proof.context -> thm -> thm list -> int -> tactic
 
@@ -39,7 +39,7 @@ let
   val {simps, ...} = info
 in
   map Thm.prop_of (case simps of SOME s => s | NONE => error "No terms of function found in info")
-end;
+end
 
 type pfunc = {
   names : string list,
@@ -49,7 +49,9 @@ type pfunc = {
 fun info_pfunc (info: Function.info): pfunc =
 let
   val {defname, fs, ...} = info;
-  val T = case hd fs of (Const (_,T)) => T | _ => error "Internal error: Invalid info to print"
+  val T = case hd fs of (Const (_,T)) => T
+                      | (Free (_,T)) => T
+                      | _ => error "Internal error: Invalid info to print"
 in
   { names=[Binding.name_of defname], terms=terms_of_info info, typs=[T] }
 end
@@ -157,14 +159,14 @@ in
 (SOME (Syntax.check_term ctxt (Const (T_nm,T_T))))
   handle (ERROR _) =>
     case Syntax.read_term ctxt (Long_Name.base_name T_nm)
-      of (Const (nm,T_T)) =>
+      of (Const (T_nm,T_T)) =>
         let
           fun col_Used i (Type ("fun", [Type ("fun", _), Ts])) (Type ("fun", [T', Ts'])) =
             (if is_Used T' then [i] else []) @ col_Used (i+1) Ts Ts'
             | col_Used i (Type ("fun", [_, Ts])) (Type ("fun", [_, Ts'])) = col_Used (i+1) Ts Ts'
             | col_Used _ _ _ = []
         in
-          SOME (Const (nm,change_typ' (contains (col_Used 0 T T_T)) 0 T))
+          SOME (Const (T_nm,change_typ' (contains (col_Used 0 T T_T)) 0 T))
         end
        | _ => error ("Timing function of " ^ nm ^ " is not defined")
 end
@@ -221,7 +223,7 @@ fun fixTypes (TVar ((t, _), T)) = TFree (t, T)
 fun noFun (Type ("fun", _)) = error "Functions in datatypes are not allowed in case constructions"
   | noFun T = T
 fun casecBuildBounds n t = if n > 0 then casecBuildBounds (n-1) (t $ (Bound (n-1))) else t
-fun casecAbs ctxt f n (Type ("fun",[T,Tr])) (Abs (v,Ta,t)) = ( map_atyps noFun T; Abs (v,Ta,casecAbs ctxt f n Tr t))
+fun casecAbs ctxt f n (Type ("fun",[T,Tr])) (Abs (v,Ta,t)) = (map_atyps noFun T; Abs (v,Ta,casecAbs ctxt f n Tr t))
   | casecAbs ctxt f n (Type ("fun",[T,Tr])) t =
     (map_atyps noFun T; case Variable.variant_fixes ["x"] ctxt of ([v],ctxt) =>
     (Abs (v,T,casecAbs ctxt f (n + 1) Tr t))
@@ -469,18 +471,14 @@ fun time_dom_tac ctxt induct_rule domintros =
 
 
 fun get_terms theory (term: term) =
-  Spec_Rules.retrieve_global theory term
+  Spec_Rules.retrieve theory term
       |> hd |> #rules
       |> map Thm.prop_of
    handle Empty => error "Function or terms of function not found"
 
 (* Register timing function of a given function *)
-fun reg_and_proove_time_func (theory: theory) (term: term list) (terms: term list) print =
-  reg_time_func theory term terms false
-  |> proove_termination term terms print
-and reg_time_func (theory: theory) (term: term list) (terms: term list) print =
+fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) print =
   let
-    val lthy = Named_Target.theory_init theory
     val _ =
       case time_term lthy (hd term)
             handle (ERROR _) => NONE
@@ -558,12 +556,10 @@ and reg_time_func (theory: theory) (term: term list) (terms: term list) print =
            | Match =>
         register true
   in
-    Local_Theory.exit_global lthy
+    lthy
   end
-and proove_termination (term: term list) terms print (theory: theory) =
+fun proove_termination (term: term list) terms print (lthy: local_theory) =
   let
-    val lthy = Named_Target.theory_init theory
-
     (* Start proving the termination *)  
     val infos = SOME (map (Function.get_info lthy) term) handle Empty => NONE
     val timing_names = map (fun_name_to_time lthy o Term.term_name) term
@@ -583,7 +579,7 @@ and proove_termination (term: term list) terms print (theory: theory) =
           val dom_args =
             terms |> hd |> get_l |> args
             |> Variable.variant_frees lthy []
-            |> map fst
+            |> map fst |> rev
 
           val {inducts, ...} = case infos of SOME [i] => i | _ => error "Proof over dom failed as no induct rule was found"
           val induct = (Option.valOf inducts |> hd)
@@ -602,7 +598,7 @@ and proove_termination (term: term list) terms print (theory: theory) =
           Function.prove_termination NONE
             (auto_tac simp_lthy) lthy
         end
-    
+
     (* Context for printing without showing question marks *)
     val print_ctxt = lthy'
       |> Config.put show_question_marks false
@@ -616,8 +612,11 @@ and proove_termination (term: term list) terms print (theory: theory) =
           print_timing' print_ctxt { names=nms, terms=terms, typs=typs } (info_pfunc time_info)
         end
   in
-    (time_info, Local_Theory.exit_global lthy')
+    (time_info, lthy')
   end
+fun reg_and_proove_time_func (lthy: local_theory) (term: term list) (terms: term list) print =
+  reg_time_func lthy term terms false
+  |> proove_termination term terms print
 
 fun fix_definition (Const ("Pure.eq", _) $ l $ r) = Const ("HOL.Trueprop", @{typ "bool \<Rightarrow> prop"})
       $ (Const ("HOL.eq", @{typ "bool \<Rightarrow> bool \<Rightarrow> bool"}) $ l $ r)
@@ -625,54 +624,61 @@ fun fix_definition (Const ("Pure.eq", _) $ l $ r) = Const ("HOL.Trueprop", @{typ
 fun check_definition [t] = [t]
   | check_definition _ = error "Only a single defnition is allowed"
 
+fun isTypeClass' (Const (nm,_)) =
+  (case String.fields (fn s => s = #".") nm |> rev
+    of (_::nm::_) => String.isSuffix "_class" nm
+     | _ => false)
+  | isTypeClass' _ = false
+val isTypeClass =
+  (List.foldr (fn (a,b) => a orelse b) false) o (map isTypeClass')
+
 (* Convert function into its timing function (called by command) *)
-fun reg_time_fun_cmd (funcs, thms) (theory: theory) =
+fun reg_time_fun_cmd (funcs, thms) (ctxt: local_theory) =
 let
-  val ctxt = Proof_Context.init_global theory
   val fterms = map (Syntax.read_term ctxt) funcs
-  val (_, lthy') = reg_and_proove_time_func theory fterms
-    (case thms of NONE => get_terms theory (hd fterms)
+  val _ = isTypeClass fterms
+    |> @{print}
+  val (_, lthy') = reg_and_proove_time_func ctxt fterms
+    (case thms of NONE => get_terms ctxt (hd fterms)
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
     true
 in lthy'
 end
 
 (* Convert function into its timing function (called by command) with termination proof provided by user*)
-fun reg_time_function_cmd (funcs, thms) (theory: theory) =
+fun reg_time_function_cmd (funcs, thms) (ctxt: local_theory) =
 let
-  val ctxt = Proof_Context.init_global theory
   val fterms = map (Syntax.read_term ctxt) funcs
-  val theory = reg_time_func theory fterms
-    (case thms of NONE => get_terms theory (hd fterms)
+  val ctxt' = reg_time_func ctxt fterms
+    (case thms of NONE => get_terms ctxt (hd fterms)
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
     true
-in theory
+in ctxt'
 end
 
 (* Convert function into its timing function (called by command) *)
-fun reg_time_definition_cmd (funcs, thms) (theory: theory) =
+fun reg_time_definition_cmd (funcs, thms) (ctxt: local_theory) =
 let
-  val ctxt = Proof_Context.init_global theory
   val fterms = map (Syntax.read_term ctxt) funcs
-  val (_, lthy') = reg_and_proove_time_func theory fterms
-    (case thms of NONE => get_terms theory (hd fterms) |> check_definition |> map fix_definition
+  val (_, ctxt') = reg_and_proove_time_func ctxt fterms
+    (case thms of NONE => get_terms ctxt (hd fterms) |> check_definition |> map fix_definition
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
     true
-in lthy'
+in ctxt'
 end
 
 val parser = (Scan.repeat1 Parse.prop) -- (Scan.option (Parse.keyword_improper "equations" -- Parse.thms1 >> snd))
 
-val _ = Outer_Syntax.command @{command_keyword "time_fun"}
+val _ = Outer_Syntax.local_theory @{command_keyword "time_fun"}
   "Defines runtime function of a function"
-  (parser >> (fn p => Toplevel.theory (reg_time_fun_cmd p)))
+  (parser >> reg_time_fun_cmd)
 
-val _ = Outer_Syntax.command @{command_keyword "time_function"}
+val _ = Outer_Syntax.local_theory @{command_keyword "time_function"}
   "Defines runtime function of a function"
-  (parser >> (fn p => Toplevel.theory (reg_time_function_cmd p)))
+  (parser >> reg_time_function_cmd)
 
-val _ = Outer_Syntax.command @{command_keyword "time_definition"}
+val _ = Outer_Syntax.local_theory @{command_keyword "time_definition"}
   "Defines runtime function of a definition"
-  (parser >> (fn p => Toplevel.theory (reg_time_definition_cmd p)))
+  (parser >> reg_time_definition_cmd)
 
 end
