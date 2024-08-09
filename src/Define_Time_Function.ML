@@ -19,7 +19,7 @@ val print_timing:  Proof.context -> Function.info -> Function.info -> unit
 val reg_and_proove_time_func: local_theory -> term list -> term list
       -> bool -> Function.info * local_theory
 val reg_time_func: local_theory -> term list -> term list
-      -> bool -> local_theory
+      -> bool -> Function.info * local_theory
 
 val time_dom_tac: Proof.context -> thm -> thm list -> int -> tactic
 
@@ -548,17 +548,14 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
           print_timing' print_ctxt { names=nms, terms=terms, typs=typs } { names=timing_names, terms=T_terms, typs=map (fn (used, typ) => change_typ' used 0 typ) (zip used typs) }
         end
 
-    (* Register function *)
-    val (_, lthy) =
-      register false
+  in
+    register false
       handle (ERROR _) =>
         register true
            | Match =>
         register true
-  in
-    lthy
   end
-fun proove_termination (term: term list) terms print (lthy: local_theory) =
+fun proove_termination (term: term list) terms print (T_info: Function.info, lthy: local_theory) =
   let
     (* Start proving the termination *)  
     val infos = SOME (map (Function.get_info lthy) term) handle Empty => NONE
@@ -572,25 +569,24 @@ fun proove_termination (term: term list) terms print (lthy: local_theory) =
         let
           val _ = warning "Falling back on proof over dom..."
           val _ = (if length term > 1 then error "Proof over dom not supported for mutual recursive functions" else ())
-          val lthy = Named_Target.theory_init (Local_Theory.exit_global lthy)
 
           fun args (a$(Var ((nm,_),T))) = args a |> (fn ar => (nm,T)::ar)
             | args (a$(Const (_,T))) = args a |> (fn ar => ("x",T)::ar)
             | args _ = []
-          val dom_args =
-            terms |> hd |> get_l |> args
-            |> Variable.variant_frees lthy []
-            |> map fst |> rev
+          val dom_vars =
+            terms |> hd |> get_l |> map_types (map_atyps fixTypes)
+            |> args |> Variable.variant_frees lthy []
+          val dom_args = 
+            List.foldl (fn (t,p) => HOLogic.mk_prod ((Free t),p)) (Free (hd dom_vars)) (tl dom_vars)
 
           val {inducts, ...} = case infos of SOME [i] => i | _ => error "Proof over dom failed as no induct rule was found"
           val induct = (Option.valOf inducts |> hd)
 
           val domintros = Proof_Context.get_fact lthy (Facts.named (hd timing_names ^ ".domintros"))
-          val prop = (hd timing_names ^ "_dom (" ^ (String.concatWith "," dom_args) ^ ")")
-                      |> Syntax.read_prop lthy
+          val prop = HOLogic.mk_Trueprop (#dom T_info $ dom_args)
 
           (* Prove a helper lemma *)
-          val dom_lemma = Goal.prove lthy dom_args [] prop
+          val dom_lemma = Goal.prove lthy (map fst dom_vars) [] prop
             (fn {context, ...} => HEADGOAL (time_dom_tac context induct domintros))
           (* Add dom_lemma to simplification set *)
           val simp_lthy = Simplifier.add_simp dom_lemma lthy
@@ -654,6 +650,7 @@ let
     (case thms of NONE => get_terms ctxt (hd fterms)
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
     true
+    |> snd
 in ctxt'
 end
 
