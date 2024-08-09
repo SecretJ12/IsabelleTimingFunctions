@@ -572,6 +572,7 @@ fun proove_termination (term: term list) terms print (lthy: local_theory) =
         let
           val _ = warning "Falling back on proof over dom..."
           val _ = (if length term > 1 then error "Proof over dom not supported for mutual recursive functions" else ())
+          val lthy = Named_Target.theory_init (Local_Theory.exit_global lthy)
 
           fun args (a$(Var ((nm,_),T))) = args a |> (fn ar => (nm,T)::ar)
             | args (a$(Const (_,T))) = args a |> (fn ar => ("x",T)::ar)
