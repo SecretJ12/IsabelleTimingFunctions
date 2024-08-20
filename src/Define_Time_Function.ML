@@ -237,9 +237,7 @@ fun noFun (Type ("fun", _)) = error "Functions in datatypes are not allowed in c
 fun casecBuildBounds n t = if n > 0 then casecBuildBounds (n-1) (t $ (Bound (n-1))) else t
 fun casecAbs ctxt f n (Type ("fun",[T,Tr])) (Abs (v,Ta,t)) = (map_atyps noFun T; Abs (v,Ta,casecAbs ctxt f n Tr t))
   | casecAbs ctxt f n (Type ("fun",[T,Tr])) t =
-    (map_atyps noFun T; case Variable.variant_fixes ["x"] ctxt of ([v],ctxt) =>
-    (Abs (v,T,casecAbs ctxt f (n + 1) Tr t))
-    | _ => error "Internal error: could not fix variable")
+    (map_atyps noFun T; Abs ("uu",T,casecAbs ctxt f (n + 1) Tr t))
   | casecAbs _ f n _ t = f (casecBuildBounds n (Term.incr_bv n 0 t))
 fun fixCasecCases _ _ _ [t] = [t]
   | fixCasecCases ctxt f (Type (_,[T,Tr])) (t::ts) = casecAbs ctxt f 0 T t :: fixCasecCases ctxt f Tr ts
@@ -347,7 +345,7 @@ fun conv_arg ctxt used _ (f as Free (nm,T as Type("fun",_))) =
 fun conv_args ctxt used origin = map (conv_arg ctxt used origin)
 
 (* Handle function calls *)
-fun build_zero (Type ("fun", [T, R])) = Abs ("x", T, build_zero R)
+fun build_zero (Type ("fun", [T, R])) = Abs ("uu", T, build_zero R)
   | build_zero _ = zero
 fun funcc_use_origin _ _ used (f as Free (nm, T as Type ("fun",_))) =
     if used f then HOLogic.mk_fst (Free (nm,HOLogic.mk_prodT (T, change_typ T)))
@@ -586,7 +584,7 @@ fun proove_termination (term: term list) terms print (T_info: Function.info, lth
           val _ = (if length term > 1 then error "Proof over dom not supported for mutual recursive functions" else ())
 
           fun args (a$(Var ((nm,_),T))) = args a |> (fn ar => (nm,T)::ar)
-            | args (a$(Const (_,T))) = args a |> (fn ar => ("x",T)::ar)
+            | args (a$(Const (_,T))) = args a |> (fn ar => ("uu",T)::ar)
             | args _ = []
           val dom_vars =
             terms |> hd |> get_l |> map_types (map_atyps fixTypes)
