@@ -119,11 +119,11 @@ and check_for_fun' true (f as Type ("fun", [_,_])) = HOLogic.mk_prodT (f, change
   | check_for_fun' _ t = t
 val change_typ = change_typ' (K false) 0
 (* Convert string name of function to its timing equivalent *)
-fun fun_name_to_time ctxt name =
+fun fun_name_to_time ctxt s name =
 let
-  val suffix = Config.get ctxt bsuffix
   val prefix = Config.get ctxt bprefix
-  fun replace_last_name [n] = [prefix ^ n ^ suffix]
+  val suffix = Config.get ctxt bsuffix
+  fun replace_last_name [n] = [prefix ^ n ^ (if s then suffix else "")]
     | replace_last_name (n::ns) = n :: (replace_last_name ns)
     | replace_last_name _ = error "Internal error: Invalid function name to convert"
   val parts = split_name name
@@ -162,9 +162,9 @@ fun typ_comp (Type (A,a)) (Type (B,b)) = (A = B) andalso List.foldl (fn ((c,i),s
   | typ_comp _ (Type _) = false
   | typ_comp _ _ = true
 
-fun time_term ctxt (Const (nm,T)) =
+fun time_term ctxt s (Const (nm,T)) =
 let
-  val T_nm = fun_name_to_time ctxt nm
+  val T_nm = fun_name_to_time ctxt s nm
   val T_T = change_typ T
 in
 (SOME (Syntax.check_term ctxt (Const (T_nm,T_T))))
@@ -181,7 +181,7 @@ in
         end
        | _ => error ("Timing function of " ^ nm ^ " is not defined")
 end
-  | time_term _ _ = error "Internal error: No valid function given"
+  | time_term _ _ _ = error "Internal error: No valid function given"
 
 type 'a converter = {
   constc : local_theory -> term list -> (term -> 'a) -> term -> 'a,
@@ -327,20 +327,20 @@ fun fun_to_time ctxt orig_used _ (origin: term list) (func as Const (nm,T)) =
 let
   val used' = used_for_const orig_used func
 in
-  if contains' typ_comp origin func then SOME (Free (func |> Term.term_name |> fun_name_to_time ctxt, change_typ' used' 0 T)) else
+  if contains' typ_comp origin func then SOME (Free (func |> Term.term_name |> fun_name_to_time ctxt true, change_typ' used' 0 T)) else
   if Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) (nm,T) then NONE else
-    time_term ctxt func
+    time_term ctxt false func
 end
   | fun_to_time ctxt _ used _ (f as Free (nm,T)) = SOME (
       if used f then HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
-      else Free (fun_name_to_time ctxt nm, change_typ T)
+      else Free (fun_name_to_time ctxt false nm, change_typ T)
       )
   | fun_to_time _ _ _ _ _ = error "Internal error: invalid function to convert"
 
 (* Convert arguments of left side of a term *)
 fun conv_arg ctxt used _ (f as Free (nm,T as Type("fun",_))) =
     if used f then Free (nm, HOLogic.mk_prodT (T, change_typ' (K false) 0 T))
-    else Free (fun_name_to_time ctxt nm, change_typ' (K false) 0 T)
+    else Free (fun_name_to_time ctxt false nm, change_typ' (K false) 0 T)
   | conv_arg _ _ _ x = x
 fun conv_args ctxt used origin = map (conv_arg ctxt used origin)
 
@@ -356,7 +356,7 @@ fun funcc_conv_arg ctxt origin used _ (t as (_ $ _)) = map_aterms (funcc_use_ori
       if used f then
         if u then Free (nm, HOLogic.mk_prodT (T, change_typ T))
         else HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
-      else Free (fun_name_to_time ctxt nm, change_typ T)
+      else Free (fun_name_to_time ctxt false nm, change_typ T)
   | funcc_conv_arg ctxt origin _ true (f as Const (_,T as Type ("fun",_))) =
   (Const (@{const_name "Product_Type.Pair"},
       Type ("fun", [T,Type ("fun", [change_typ T, HOLogic.mk_prodT (T,change_typ T)])]))
@@ -493,7 +493,7 @@ end
 fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) print =
   let
     val _ =
-      case time_term lthy (hd term)
+      case time_term lthy true (hd term)
             handle (ERROR _) => NONE
         of SOME _ => error ("Timing function already declared: " ^ (Term.term_name (hd term)))
          | NONE => ()
@@ -528,7 +528,7 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
 
     (* 4. Register function and prove termination *)
     val names = map Term.term_name term
-    val timing_names = map (fun_name_to_time lthy) names
+    val timing_names = map (fun_name_to_time lthy true) names
     val bindings = map (fn nm => (Binding.name nm, NONE, NoSyn)) timing_names
     fun pat_completeness_auto ctxt =
       Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
@@ -572,7 +572,7 @@ fun proove_termination (term: term list) terms print (T_info: Function.info, lth
   let
     (* Start proving the termination *)  
     val infos = SOME (map (Function.get_info lthy) term) handle Empty => NONE
-    val timing_names = map (fun_name_to_time lthy o Term.term_name) term
+    val timing_names = map (fun_name_to_time lthy true o Term.term_name) term
 
     (* Proof by lexicographic_order_tac *)
     val (time_info, lthy') =
