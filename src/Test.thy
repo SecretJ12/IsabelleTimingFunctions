@@ -1,5 +1,5 @@
 theory Test
-  imports "Define_Time_Function"
+  imports Define_Time_Function
 begin
 
 chapter \<open>Definition on example\<close>
@@ -113,6 +113,10 @@ termination
 time_fun terminationA
 lemma "T_terminationA 10 22 = 13"
   by simp
+
+ML \<open>
+@{term "T_terminationA_dom"}
+\<close>
 
 function terminationB :: \<open>nat \<Rightarrow> bool\<close> where
 \<open>terminationB n = (if n \<le> 1 then True else if (Suc 1) dvd n then terminationB (n div (Suc 1)) else terminationB ((Suc (Suc 1)) * n + 1))\<close>
@@ -230,13 +234,13 @@ time_fun filter
 time_fun find_zero
 fun t_is_zero :: "nat \<Rightarrow> nat" where
   "t_is_zero n = 0"
-fun t_filter :: "(('a \<Rightarrow> bool) * ('a \<Rightarrow> nat)) \<Rightarrow> 'a list \<Rightarrow> nat" where
+fun t_filter :: "('a \<Rightarrow> nat) \<Rightarrow> 'a list \<Rightarrow> nat" where
   "t_filter _ [] = 1"
-| "t_filter (p,t_p) (x#xs) = 1 + t_filter (p,t_p) xs + t_p x"
-lemma filter: "t_filter (p,t_p) xs = T_filter (p,t_p) xs"
+| "t_filter t_p (x#xs) = 1 + t_filter t_p xs + t_p x"
+lemma filter: "t_filter t_p xs = T_filter t_p xs"
   by (induction xs) auto
 fun t_find_zero :: "nat list \<Rightarrow> nat" where
-  "t_find_zero xs = t_filter (is_zero,t_is_zero) xs"
+  "t_find_zero xs = t_filter t_is_zero xs"
 lemma "t_find_zero xs = T_find_zero xs"
   apply (induction xs)
   using T_is_zero.elims by (auto simp: filter)
@@ -280,5 +284,26 @@ text \<open>Let expression where variable is no longer used should be replaced\<
 fun let_red where
   "let_red x y = (let b = y in let a = x in (a, dummy b))"
 time_fun let_red
+
+class T_size =
+  fixes T_size :: "'a \<Rightarrow> nat"
+instantiation list :: (_) T_size
+begin
+
+time_fun length
+
+instance..
+end
+instantiation nat :: T_size
+begin
+
+time_fun "size::nat \<Rightarrow> nat"
+
+instance..
+end
+lemma "T_size [a,b,c] = 4"
+  by simp
+lemma "T_size (Suc 4) = 0"
+  by simp
 
 end

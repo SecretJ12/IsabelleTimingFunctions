@@ -29,6 +29,8 @@ structure Timing_Functions : TIMING_FUNCTIONS =
 struct
 (* Configure config variable to adjust the prefix *)
 val bprefix = Attrib.setup_config_string @{binding "time_prefix"} (K "T_")
+(* Configure config variable to adjust the suffix *)
+val bsuffix = Attrib.setup_config_string @{binding "time_suffix"} (K "")
 
 (* some default values to build terms easier *)
 val zero = Const (@{const_name "Groups.zero"}, HOLogic.natT)
@@ -88,18 +90,21 @@ val If_name = @{const_name "HOL.If"}
 val Let_name = @{const_name "HOL.Let"}
 
 fun contains l e = exists (fn e' => e' = e) l
+fun contains' comp l e = exists (fn e' => case (e,e') of (Const (nm,T), Const (nm',T')) => nm = nm' andalso comp T T' | _ => false) l
 fun zip [] [] = []
   | zip (x::xs) (y::ys) = (x, y) :: zip xs ys
   | zip _ _ = error "Internal error: Cannot zip lists with differing size"
 fun index [] _ = 0
   | index (x::xs) el = (if x = el then 0 else 1 + index xs el)
 fun used_for_const orig_used t i = orig_used (t,i)
+(* Split name by . *)
+val split_name = String.fields (fn s => s = #".")
 
 (* returns true if it's an if term *)
 fun is_if (Const (n,_)) = (n = If_name)
   | is_if _ = false
 (* returns true if it's a case term *)
-fun is_case (Const (n,_)) = String.isPrefix "case_" (List.last (String.fields (fn s => s = #".") n))
+fun is_case (Const (n,_)) = String.isPrefix "case_" (List.last (split_name n))
   | is_case _ = false
 (* returns true if it's a let term *)
 fun is_let (Const (n,_)) = (n = Let_name)
@@ -116,11 +121,12 @@ val change_typ = change_typ' (K false) 0
 (* Convert string name of function to its timing equivalent *)
 fun fun_name_to_time ctxt name =
 let
+  val suffix = Config.get ctxt bsuffix
   val prefix = Config.get ctxt bprefix
-  fun replace_last_name [n] = [prefix ^ n]
+  fun replace_last_name [n] = [prefix ^ n ^ suffix]
     | replace_last_name (n::ns) = n :: (replace_last_name ns)
     | replace_last_name _ = error "Internal error: Invalid function name to convert"
-  val parts = String.fields (fn s => s = #".") name
+  val parts = split_name name
 in
   String.concatWith "." (replace_last_name parts)
 end
@@ -150,6 +156,11 @@ fun Const_name (Const (nm,_)) = SOME nm
   | Const_name _ = NONE
 fun is_Used (Type ("Product_Type.prod", _)) = true
   | is_Used _ = false
+(* Custom compare function for types ignoring variable names *)
+fun typ_comp (Type (A,a)) (Type (B,b)) = (A = B) andalso List.foldl (fn ((c,i),s) => typ_comp c i andalso s) true (zip a b)
+  | typ_comp (Type _) _ = false
+  | typ_comp _ (Type _) = false
+  | typ_comp _ _ = true
 
 fun time_term ctxt (Const (nm,T)) =
 let
@@ -183,6 +194,7 @@ type 'a converter = {
 (* Walks over term and calls given converter *)
 fun walk_func (t1 $ t2) ts = walk_func t1 (t2::ts)
   | walk_func t ts = (t, ts)
+fun walk_func' t = walk_func t []
 fun build_func (f, []) = f
   | build_func (f, (t::ts)) = build_func (f$t, ts)
 fun walk_abs (Abs (nm,T,t)) nms Ts = walk_abs t (nm::nms) (T::Ts)
@@ -312,28 +324,25 @@ fun opt_term NONE = HOLogic.zero
 fun use_origin (Free (nm, T as Type ("fun",_))) = HOLogic.mk_fst (Free (nm,HOLogic.mk_prodT (T, change_typ T)))
   | use_origin t = t
 
-(* Converting of function term *)
+(* Conversion of function term *)
 fun fun_to_time ctxt orig_used _ (origin: term list) (func as Const (nm,T)) =
 let
-  val prefix = Config.get ctxt bprefix
   val used' = used_for_const orig_used func
 in
-  if contains origin func then SOME (Free (prefix ^ Term.term_name func, change_typ' used' 0 T)) else
+  if contains' typ_comp origin func then SOME (Free (func |> Term.term_name |> fun_name_to_time ctxt, change_typ' used' 0 T)) else
   if Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) (nm,T) then NONE else
     time_term ctxt func
 end
   | fun_to_time ctxt _ used _ (f as Free (nm,T)) = SOME (
       if used f then HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
-      else Free (Config.get ctxt bprefix ^ nm, change_typ T)
+      else Free (fun_name_to_time ctxt nm, change_typ T)
       )
   | fun_to_time _ _ _ _ _ = error "Internal error: invalid function to convert"
 
 (* Convert arguments of left side of a term *)
 fun conv_arg ctxt used _ (f as Free (nm,T as Type("fun",_))) =
     if used f then Free (nm, HOLogic.mk_prodT (T, change_typ' (K false) 0 T))
-    else Free (Config.get ctxt bprefix ^ nm, change_typ' (K false) 0 T)
-  | conv_arg ctxt _ origin (f as Const (_, Type("fun",_))) =
-      (error "weird case i don't understand TODO"; HOLogic.mk_prod (f, fun_to_time ctxt (K false) (K false) origin f |> Option.valOf))
+    else Free (fun_name_to_time ctxt nm, change_typ' (K false) 0 T)
   | conv_arg _ _ _ x = x
 fun conv_args ctxt used origin = map (conv_arg ctxt used origin)
 
@@ -349,7 +358,7 @@ fun funcc_conv_arg ctxt origin used _ (t as (_ $ _)) = map_aterms (funcc_use_ori
       if used f then
         if u then Free (nm, HOLogic.mk_prodT (T, change_typ T))
         else HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
-      else Free (Config.get ctxt bprefix ^ nm, change_typ T)
+      else Free (fun_name_to_time ctxt nm, change_typ T)
   | funcc_conv_arg ctxt origin _ true (f as Const (_,T as Type ("fun",_))) =
   (Const (@{const_name "Product_Type.Pair"},
       Type ("fun", [T,Type ("fun", [change_typ T, HOLogic.mk_prodT (T,change_typ T)])]))
@@ -471,10 +480,16 @@ fun time_dom_tac ctxt induct_rule domintros =
 
 
 fun get_terms theory (term: term) =
-  Spec_Rules.retrieve theory term
-      |> hd |> #rules
-      |> map Thm.prop_of
+let
+  val equations = Spec_Rules.retrieve theory term
+      |> map #rules
+      |> map (map Thm.prop_of)
    handle Empty => error "Function or terms of function not found"
+in
+  equations
+    |> filter (fn ts => typ_comp (ts |> hd |> get_l |> walk_func' |> fst |> dest_Const |> snd) (term |> dest_Const |> snd))
+    |> hd
+end
 
 (* Register timing function of a given function *)
 fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) print =
@@ -622,19 +637,34 @@ fun check_definition [t] = [t]
   | check_definition _ = error "Only a single defnition is allowed"
 
 fun isTypeClass' (Const (nm,_)) =
-  (case String.fields (fn s => s = #".") nm |> rev
+  (case split_name nm |> rev
     of (_::nm::_) => String.isSuffix "_class" nm
      | _ => false)
   | isTypeClass' _ = false
 val isTypeClass =
   (List.foldr (fn (a,b) => a orelse b) false) o (map isTypeClass')
 
+fun detect_typ (ctxt: local_theory) (term: term) =
+let
+  val class_term =  (case term of Const (nm,_) => Syntax.read_term ctxt nm
+      | _ => error "Could not find term of class")
+  fun find_free (Type (_,class)) (Type (_,inst)) = List.foldl (fn ((c,i),s) => (case s of NONE => find_free c i | t => t)) (NONE) (zip class inst)
+    | find_free (TFree _) (TFree _) = NONE
+    | find_free (TFree _) (Type (nm,_)) = SOME nm
+    | find_free  _ _ = error "Unhandled case in detecting type"
+in
+  find_free (type_of class_term) (type_of term)
+    |> Option.map (hd o rev o split_name)
+end
+
 (* Convert function into its timing function (called by command) *)
 fun reg_time_fun_cmd (funcs, thms) (ctxt: local_theory) =
 let
   val fterms = map (Syntax.read_term ctxt) funcs
-  val _ = isTypeClass fterms
-    |> @{print}
+  val isTypeClass = isTypeClass fterms
+  val _ = (if length fterms > 1 andalso isTypeClass then error "No mutual recursion inside instantiation allowed" else ())
+  val suffix = (if isTypeClass then detect_typ ctxt (hd fterms) else NONE)
+  val ctxt = (case suffix of NONE => I | SOME s => Config.put bsuffix ("_" ^ s)) ctxt
   val (_, lthy') = reg_and_proove_time_func ctxt fterms
     (case thms of NONE => get_terms ctxt (hd fterms)
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
