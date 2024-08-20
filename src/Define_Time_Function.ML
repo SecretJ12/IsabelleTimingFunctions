@@ -634,7 +634,7 @@ fun fix_definition (Const ("Pure.eq", _) $ l $ r) = Const ("HOL.Trueprop", @{typ
       $ (Const ("HOL.eq", @{typ "bool \<Rightarrow> bool \<Rightarrow> bool"}) $ l $ r)
   | fix_definition t = t
 fun check_definition [t] = [t]
-  | check_definition _ = error "Only a single defnition is allowed"
+  | check_definition _ = error "Only a single definition is allowed"
 
 fun isTypeClass' (Const (nm,_)) =
   (case split_name nm |> rev
@@ -665,17 +665,21 @@ let
   val _ = (if length fterms > 1 andalso isTypeClass then error "No mutual recursion inside instantiation allowed" else ())
   val suffix = (if isTypeClass then detect_typ ctxt (hd fterms) else NONE)
   val ctxt = (case suffix of NONE => I | SOME s => Config.put bsuffix ("_" ^ s)) ctxt
-  val (_, lthy') = reg_and_proove_time_func ctxt fterms
+  val (_, ctxt') = reg_and_proove_time_func ctxt fterms
     (case thms of NONE => get_terms ctxt (hd fterms)
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
     true
-in lthy'
+in ctxt'
 end
 
 (* Convert function into its timing function (called by command) with termination proof provided by user*)
 fun reg_time_function_cmd (funcs, thms) (ctxt: local_theory) =
 let
   val fterms = map (Syntax.read_term ctxt) funcs
+  val isTypeClass = isTypeClass fterms
+  val _ = (if length fterms > 1 andalso isTypeClass then error "No mutual recursion inside instantiation allowed" else ())
+  val suffix = (if isTypeClass then detect_typ ctxt (hd fterms) else NONE)
+  val ctxt = (case suffix of NONE => I | SOME s => Config.put bsuffix ("_" ^ s)) ctxt
   val ctxt' = reg_time_func ctxt fterms
     (case thms of NONE => get_terms ctxt (hd fterms)
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
@@ -688,6 +692,10 @@ end
 fun reg_time_definition_cmd (funcs, thms) (ctxt: local_theory) =
 let
   val fterms = map (Syntax.read_term ctxt) funcs
+  val isTypeClass = isTypeClass fterms
+  val _ = (if length fterms > 1 andalso isTypeClass then error "No mutual recursion inside instantiation allowed" else ())
+  val suffix = (if isTypeClass then detect_typ ctxt (hd fterms) else NONE)
+  val ctxt = (case suffix of NONE => I | SOME s => Config.put bsuffix ("_" ^ s)) ctxt
   val (_, ctxt') = reg_and_proove_time_func ctxt fterms
     (case thms of NONE => get_terms ctxt (hd fterms) |> check_definition |> map fix_definition
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
