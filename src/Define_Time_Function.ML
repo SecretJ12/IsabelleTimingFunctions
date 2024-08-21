@@ -147,8 +147,8 @@ fun get_l (_ $ (_ $ l $ _)) = l
 fun get_r (_ $ (_ $ _ $ r)) = r
   | get_r _ = error "Internal error: No right side of equation found"
 (* Return name of Const *)
-fun Const_name (Const (nm,_)) = nm
-  | Const_name _ = error "Internal error: Only supports const"
+fun Const_name (Const (nm,_)) = SOME nm
+  | Const_name _ = NONE
 fun is_Used (Type ("Product_Type.prod", _)) = true
   | is_Used _ = false
 (* Custom compare function for types ignoring variable names *)
