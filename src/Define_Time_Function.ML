@@ -90,8 +90,6 @@ fun print_timing ctxt (oinfo: Function.info) (tinfo: Function.info) =
 
 fun contains l e = exists (fn e' => e' = e) l
 fun contains' comp l e = exists (comp e) l
-fun index [] _ = 0
-  | index (x::xs) el = (if x = el then 0 else 1 + index xs el)
 fun used_for_const orig_used t i = orig_used (t,i)
 (* Split name by . *)
 val split_name = String.fields (fn s => s = #".")
@@ -107,13 +105,11 @@ fun is_let (Const (@{const_name "HOL.Let"},_)) = true
   | is_let _ = false
 (* change type of original function to new type (_ \<Rightarrow> ... \<Rightarrow> _ to _ \<Rightarrow> ... \<Rightarrow> nat)
     and replace all function arguments f with (t*T_f) if used *)
-fun change_typ' used (Type ("fun", [T1, T2])) = 
-      Type ("fun", [check_for_fun' (used 0) T1, change_typ' (fn i => used (i+1)) T2])
-  | change_typ' _ _ = HOLogic.natT
-and check_for_fun' true (f as Type ("fun", [_,_])) = HOLogic.mk_prodT (f, change_typ' (K false) f)
-  | check_for_fun' false (f as Type ("fun", [_,_])) = change_typ' (K false) f
-  | check_for_fun' _ t = t
-val change_typ = change_typ' (K false)
+fun change_typ (Type ("fun", [T1, T2])) = 
+      Type ("fun", [check_for_fun T1, change_typ T2])
+  | change_typ _ = HOLogic.natT
+and check_for_fun (f as Type ("fun", [_,_])) = HOLogic.mk_prodT (f, change_typ f)
+  | check_for_fun t = t
 (* Convert string name of function to its timing equivalent *)
 fun fun_name_to_time ctxt s name =
 let
@@ -166,15 +162,8 @@ in
 (SOME (Syntax.check_term ctxt (Const (T_nm,T_T))))
   handle (ERROR _) =>
     case Syntax.read_term ctxt (Long_Name.base_name T_nm)
-      of (Const (T_nm,T_T)) =>
-        let
-          fun col_Used i (Type ("fun", [Type ("fun", _), Ts])) (Type ("fun", [T', Ts'])) =
-            (if is_Used T' then [i] else []) @ col_Used (i+1) Ts Ts'
-            | col_Used i (Type ("fun", [_, Ts])) (Type ("fun", [_, Ts'])) = col_Used (i+1) Ts Ts'
-            | col_Used _ _ _ = []
-        in
-          SOME (Const (T_nm,change_typ' (contains (col_Used 0 T T_T)) T))
-        end
+      of (Const (T_nm,_)) =>
+        SOME (Const (T_nm,change_typ T))
        | _ => error ("Timing function of " ^ nm ^ " is not defined")
 end
   | time_term _ _ _ = error "Internal error: No valid function given"
@@ -324,53 +313,43 @@ fun use_origin (Free (nm, T as Type ("fun",_))) = HOLogic.mk_fst (Free (nm,HOLog
   | use_origin t = t
 
 (* Conversion of function term *)
-fun fun_to_time ctxt orig_used _ (origin: term list) (func as Const (nm,T)) =
-let
-  val used' = used_for_const orig_used func
-in
-  if contains' const_comp origin func then SOME (Free (func |> Term.term_name |> fun_name_to_time ctxt true, change_typ' used' T)) else
+fun fun_to_time ctxt (origin: term list) (func as Const (nm,T)) =
+  if contains' const_comp origin func then SOME (Free (func |> Term.term_name |> fun_name_to_time ctxt true, change_typ T)) else
   if Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) (nm,T) then NONE else
     time_term ctxt false func
-end
-  | fun_to_time ctxt _ used _ (f as Free (nm,T)) = SOME (
-      if used f then HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
-      else Free (fun_name_to_time ctxt false nm, change_typ T)
-      )
-  | fun_to_time _ _ _ _ _ = error "Internal error: invalid function to convert"
+  | fun_to_time _ _ (Free (nm,T)) =
+      SOME (HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T))))
+  | fun_to_time _ _ _ = error "Internal error: invalid function to convert"
 
 (* Convert arguments of left side of a term *)
-fun conv_arg ctxt used _ (f as Free (nm,T as Type("fun",_))) =
-    if used f then Free (nm, HOLogic.mk_prodT (T, change_typ' (K false) T))
-    else Free (fun_name_to_time ctxt false nm, change_typ' (K false) T)
-  | conv_arg _ _ _ x = x
-fun conv_args ctxt used origin = map (conv_arg ctxt used origin)
+fun conv_arg _ _ (Free (nm,T as Type("fun",_))) =
+    Free (nm, HOLogic.mk_prodT (T, change_typ T))
+  | conv_arg _ _ x = x
+fun conv_args ctxt origin = map (conv_arg ctxt origin)
 
 (* Handle function calls *)
 fun build_zero (Type ("fun", [T, R])) = Abs ("uu", T, build_zero R)
   | build_zero _ = zero
-fun funcc_use_origin used (f as Free (nm, T as Type ("fun",_))) =
-    if used f then HOLogic.mk_fst (Free (nm,HOLogic.mk_prodT (T, change_typ T)))
-    else error "Internal error: Error in used detection"
-  | funcc_use_origin _ t = t
-fun funcc_conv_arg _ used _ (t as (_ $ _)) = map_aterms (funcc_use_origin used) t
-  | funcc_conv_arg wctxt used u (f as Free (nm, T as Type ("fun",_))) =
-      if used f then
-        if u then Free (nm, HOLogic.mk_prodT (T, change_typ T))
-        else HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
-      else Free (fun_name_to_time (#ctxt wctxt) false nm, change_typ T)
-  | funcc_conv_arg wctxt _ true (f as Const (_,T as Type ("fun",_))) =
+fun funcc_use_origin (Free (nm, T as Type ("fun",_))) =
+    HOLogic.mk_fst (Free (nm,HOLogic.mk_prodT (T, change_typ T)))
+  | funcc_use_origin t = t
+fun funcc_conv_arg _ _ (t as (_ $ _)) = map_aterms funcc_use_origin t
+  | funcc_conv_arg _ u (Free (nm, T as Type ("fun",_))) =
+      if u then Free (nm, HOLogic.mk_prodT (T, change_typ T))
+      else HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
+  | funcc_conv_arg wctxt true (f as Const (_,T as Type ("fun",_))) =
   (Const (@{const_name "Product_Type.Pair"},
       Type ("fun", [T,Type ("fun", [change_typ T, HOLogic.mk_prodT (T,change_typ T)])]))
-    $ f $ (Option.getOpt (fun_to_time (#ctxt wctxt) (K false) (K false) (#origins wctxt) f, build_zero T)))
-  | funcc_conv_arg wctxt _ false (f as Const (_,T as Type ("fun",_))) =
-      Option.getOpt (fun_to_time (#ctxt wctxt) (K false) (K false) (#origins wctxt) f, build_zero T)
-  | funcc_conv_arg _ _ _ t = t
+    $ f $ (Option.getOpt (fun_to_time (#ctxt wctxt) (#origins wctxt) f, build_zero T)))
+  | funcc_conv_arg wctxt false (f as Const (_,T as Type ("fun",_))) =
+      Option.getOpt (fun_to_time (#ctxt wctxt) (#origins wctxt) f, build_zero T)
+  | funcc_conv_arg _ _ t = t
 
-fun funcc_conv_args _ _ _ [] = []
-  | funcc_conv_args wctxt used (Type ("fun", [t, ts])) (a::args) =
-      funcc_conv_arg wctxt used (is_Used t) a :: funcc_conv_args wctxt used ts args
-  | funcc_conv_args _ _ _ _ = error "Internal error: Non matching type"
-fun funcc orig_used used wctxt func args =
+fun funcc_conv_args _ _ [] = []
+  | funcc_conv_args wctxt (Type ("fun", [t, ts])) (a::args) =
+      funcc_conv_arg wctxt (is_Used t) a :: funcc_conv_args wctxt ts args
+  | funcc_conv_args _ _ _ = error "Internal error: Non matching type"
+fun funcc wctxt func args =
 let
   fun get_T (Free (_,T)) = T
     | get_T (Const (_,T)) = T
@@ -378,8 +357,8 @@ let
     | get_T _ = error "Internal error: Forgotten type"
 in
   List.foldr (I #-> plus)
-  (case fun_to_time (#ctxt wctxt) orig_used used (#origins wctxt) func
-    of SOME t => SOME (list_comb (t,funcc_conv_args wctxt used (get_T t) args))
+  (case fun_to_time (#ctxt wctxt) (#origins wctxt) func
+    of SOME t => SOME (list_comb (t,funcc_conv_args wctxt (get_T t) args))
     | NONE => NONE)
   (map (#f wctxt) args)
 end
@@ -440,11 +419,11 @@ fun letc wctxt expT exp abs t =
     | NONE => NONE))
 
 (* The converter for timing functions given to the walker *)
-fun converter orig_used used : term option converter = {
+val converter : term option converter = {
         constc = fn _ => fn t =>
           (case t of Const ("HOL.undefined", _) => SOME (Const ("HOL.undefined", @{typ "nat"}))
                    | _ => NONE),
-        funcc = (funcc orig_used used),
+        funcc = funcc,
         ifc = ifc,
         casec = casec,
         letc = letc
@@ -452,24 +431,20 @@ fun converter orig_used used : term option converter = {
 fun top_converter is_rec _ _ = opt_term o (fn exp => plus exp (if is_rec then SOME one else NONE))
 
 (* Use converter to convert right side of a term *)
-fun to_time ctxt origin is_rec orig_used used term =
-  top_converter is_rec ctxt origin (walk ctxt origin (converter orig_used used) term)
+fun to_time ctxt origin is_rec term =
+  top_converter is_rec ctxt origin (walk ctxt origin converter term)
 
 (* Converts a term to its running time version *)
-fun convert_term ctxt (origin: term list) is_rec orig_used (pT $ (Const (eqN, _) $ l $ r)) =
+fun convert_term ctxt (origin: term list) is_rec (pT $ (Const (eqN, _) $ l $ r)) =
 let
-  val (l' as (l_const, l_params)) = strip_comb l
-  val used =
-    l_const
-    |> used_for_const orig_used
-    |> (fn f => fn n => f (index l_params n))
+  val l' = strip_comb l
 in
       pT
       $ (Const (eqN, @{typ "nat \<Rightarrow> nat \<Rightarrow> bool"})
-        $ (list_comb (l' |>> (fun_to_time ctxt orig_used used origin) |>> Option.valOf ||> conv_args ctxt used origin))
-        $ (to_time ctxt origin is_rec orig_used used r))
+        $ (list_comb (l' |>> (fun_to_time ctxt origin) |>> Option.valOf ||> conv_args ctxt origin))
+        $ (to_time ctxt origin is_rec r))
 end
-  | convert_term _ _ _ _ _ = error "Internal error: invalid term to convert"
+  | convert_term _ _ _ _ = error "Internal error: invalid term to convert"
 
 (* 4. Tactic to prove "f_dom n" *)
 fun time_dom_tac ctxt induct_rule domintros =
@@ -517,15 +492,9 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       - On left side change name of function to timing function
       - Convert right side of equation with conversion schema
     *)
-    fun convert used = map (convert_term lthy term is_rec used)
-    fun repeat T_terms =
-      let
-        val orig_used = find_used lthy term terms T_terms
-        val T_terms' = convert orig_used terms
-      in
-        if T_terms' <> T_terms then repeat T_terms' else T_terms'
-      end
-    val T_terms = repeat (convert (K true) terms)
+    val T_terms = map (convert_term lthy term is_rec) terms
+
+    (* TODO simplify *)
     val orig_used = find_used lthy term terms T_terms
 
     (* 4. Register function and prove termination *)
@@ -557,11 +526,10 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
     val _ = if not print then () else
         let
           val nms = map (fst o dest_Const) term
-          val used = map (used_for_const orig_used) term
           val typs = map (snd o dest_Const) term
         in
           print_timing' print_ctxt { names=nms, terms=terms, typs=typs }
-            { names=timing_names, terms=T_terms, typs=map (fn (used, typ) => change_typ' used typ) (ListPair.zip (used, typs)) }
+            { names=timing_names, terms=T_terms, typs=map change_typ typs }
         end
 
   in

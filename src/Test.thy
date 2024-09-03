@@ -289,21 +289,21 @@ class T_size =
   fixes T_size :: "'a \<Rightarrow> nat"
 instantiation list :: (_) T_size
 begin
-
 time_fun length
-
 instance..
 end
 instantiation nat :: T_size
 begin
-
 time_fun "size::nat \<Rightarrow> nat"
-
 instance..
 end
 lemma "T_size [a,b,c] = 4"
   by simp
 lemma "T_size (Suc 4) = 0"
   by simp
+
+fun test where
+  "test n = (case n of 0 \<Rightarrow> 0 | (Suc n) \<Rightarrow> dummy n)"
+time_fun test
 
 end
