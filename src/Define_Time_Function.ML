@@ -279,16 +279,15 @@ fun find_rec ctxt term = (walk ctxt term {
 fun is_rec ctxt (term: term list) = List.foldr (or (find_rec ctxt term)) false
 
 (* 2.2 Check for higher-order function if original function is used *)
-fun find_used' ctxt term t T_t =
+fun find_used' T_t =
 let
-  val (ident, _) = strip_comb (get_l t)
   val (T_ident, T_args) = strip_comb (get_l T_t)
 
   fun filter_passed [] = []
     | filter_passed ((f as Free (_, Type ("Product_Type.prod",[Type ("fun",_), Type ("fun", _)])))::args) = 
         f :: filter_passed args
     | filter_passed (_::args) = filter_passed args
-  val frees' = (walk ctxt term {
+  val frees = (walk @{context} [] {
           funcc = (fn wctxt => fn t => fn args =>
               (case t of (Const ("Product_Type.prod.snd", _)) => []
                   | _ => (if t = T_ident then [] else filter_passed args)
@@ -298,16 +297,13 @@ let
           casec = (fn wctxt => fn _ => fn cs => List.foldr (fn (l,r) => (#f wctxt) l @ r) [] cs),
           letc = (fn wctxt => fn _ => fn exp => fn _ => fn t => (#f wctxt) exp @ (#f wctxt) t)
       }) (get_r T_t)
-  fun build _ [] _ = false
-    | build i (a::args) item =
-        (if item = (ident,i) then contains frees' a else build (i+1) args item)
+  fun build _ [] = []
+    | build i (a::args) =
+        (if contains frees a then [(T_ident,i)] else []) @ build (i+1) args
 in
   build 0 T_args
 end
-fun find_used ctxt term terms T_terms =
-  ListPair.zip (terms, T_terms)
-  |> List.map (fn (t, T_t) => find_used' ctxt term t T_t)
-  |> List.foldr (fn (f,g) => fn item => f item orelse g item) (K false)
+val find_used = List.foldr (op @) [] o List.map find_used'
 
 
 (* 3. Convert equations *)
@@ -505,7 +501,9 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
     val T_terms = map (convert_term lthy term is_rec) terms
 
     (* TODO simplify *)
-    val orig_used = find_used lthy term terms T_terms
+    val _ = if null (find_used T_terms)
+      then ()
+      else Pretty.writeln (Pretty.str "The function can be simplified")
 
     (* 4. Register function and prove termination *)
     val names = map Term.term_name term
