@@ -11,7 +11,7 @@ type 'a converter = {
   funcc : 'a wctxt -> term -> term list -> 'a,
   ifc : 'a wctxt -> typ -> term -> term -> term -> 'a,
   casec : 'a wctxt -> term -> term list -> 'a,
-  letc : 'a wctxt -> typ -> term -> string list -> typ list -> term -> 'a
+  letc : 'a wctxt -> typ -> term -> (string * typ) list -> term -> 'a
 }
 val walk : local_theory -> term list -> 'a converter -> term -> 'a
 
@@ -130,7 +130,6 @@ end
 fun count_args (Type (n, [_,res])) = (if n = "fun" then 1 + count_args res else 0)
   | count_args _ = 0
 (* Check if number of arguments matches function *)
-val _ = dest_Const
 fun check_args s (t, args) =
     (if length args = count_args (type_of t) then ()
      else error ("Partial applications/Lambdas not allowed (" ^ s ^ ")"))
@@ -191,23 +190,16 @@ type 'a converter = {
   funcc : 'a wctxt -> term -> term list -> 'a,
   ifc : 'a wctxt -> typ -> term -> term -> term -> 'a,
   casec : 'a wctxt -> term -> term list -> 'a,
-  letc : 'a wctxt -> typ -> term -> string list -> typ list -> term -> 'a
+  letc : 'a wctxt -> typ -> term -> (string * typ) list -> term -> 'a
 }
 
 (* Walks over term and calls given converter *)
-fun walk_func (t1 $ t2) ts = walk_func t1 (t2::ts)
-  | walk_func t ts = (t, ts)
-fun walk_func' t = walk_func t []
-fun build_func (f, []) = f
-  | build_func (f, (t::ts)) = build_func (f$t, ts)
-fun walk_abs (Abs (nm,T,t)) nms Ts = walk_abs t (nm::nms) (T::Ts)
-  | walk_abs t nms Ts = (t, nms, Ts)
-fun build_abs t (nm::nms) (T::Ts) = build_abs (Abs (nm,T,t)) nms Ts
-  | build_abs t [] [] = t
-  | build_abs _ _ _ = error "Internal error: Invalid terms to build abs"
+(* get rid and use Term.strip_abs.eta especially for lambdas *)
+fun build_abs t ((nm,T)::abs) = build_abs (Abs (nm,T,t)) abs
+  | build_abs t [] = t
 fun walk ctxt (origin: term list) (conv as {ifc, casec, funcc, letc, ...} : 'a converter) (t as _ $ _) =
   let
-    val (f, args) = walk_func t []
+    val (f, args) = strip_comb t
     val this = (walk ctxt origin conv)
     val _ = (case f of Abs _ => error "Lambdas not supported" | _ => ())
     val wctxt = {ctxt = ctxt, origins = origin, f = this}
@@ -220,8 +212,8 @@ fun walk ctxt (origin: term list) (conv as {ifc, casec, funcc, letc, ...} : 'a c
       else if is_case f then casec wctxt f args
       else if is_let f then
       (case f of (Const (_,lT)) =>
-         (case args of [exp, t] => 
-            let val (t,nms,Ts) = walk_abs t [] [] in letc wctxt lT exp nms Ts t end
+         (case args of [exp, t] =>
+            let val (abs,t) = strip_abs t in letc wctxt lT exp abs t end
                      | _ => error "Partial applications not allowed (let)")
                | _ => error "Internal error: invalid let term")
       else funcc wctxt f args)
@@ -247,26 +239,26 @@ fun fixCasecCases _ _ [t] = [t]
   | fixCasecCases wctxt (Type (_,[T,Tr])) (t::ts) = casecAbs wctxt 0 T t :: fixCasecCases wctxt Tr ts
   | fixCasecCases _ _ _ = error "Internal error: invalid case types/terms"
 fun fixCasec wctxt (t as Const (_,T)) args =
-      (check_args "cases" (t,args); build_func (t,fixCasecCases wctxt T args))
+      (check_args "cases" (t,args); list_comb (t,fixCasecCases wctxt T args))
   | fixCasec _ _ _ = error "Internal error: invalid case term"
 
 fun fixPartTerms ctxt (term: term list) t =
   let
-    val _ = check_args "args" (walk_func (get_l t) [])
+    val _ = check_args "args" (strip_comb (get_l t))
   in
     map_r (walk ctxt term {
           funcc = (fn wctxt => fn t => fn args =>
-              (check_args "func" (t,args); build_func (t, map (#f wctxt) args))),
+              (check_args "func" (t,args); list_comb (t, map (#f wctxt) args))),
           constc = (fn _ => fn c => (case c of Abs _ => error "Lambdas not supported" | _ => c)),
           ifc = (fn wctxt => fn T => fn cond => fn tt => fn tf =>
             ((Const (@{const_name "HOL.If"}, T)) $ (#f wctxt) cond $ ((#f wctxt) tt) $ ((#f wctxt) tf))),
           casec = fixCasec,
-          letc = (fn wctxt => fn expT => fn exp => fn nms => fn Ts => fn t =>
+          letc = (fn wctxt => fn expT => fn exp => fn abs => fn t =>
               let
-                val f' = if length nms = 0 then
+                val f' = if length abs = 0 then
                 (case (#f wctxt) (t$exp) of t$_ => t | _ => error "Internal error: case could not be fixed (let)")
                 else (#f wctxt) t
-              in (Const (@{const_name "HOL.Let"},expT) $ ((#f wctxt) exp) $ build_abs f' nms Ts) end)
+              in (Const (@{const_name "HOL.Let"},expT) $ ((#f wctxt) exp) $ build_abs f' abs) end)
       }) t
   end
 
@@ -282,7 +274,7 @@ fun find_rec ctxt term = (walk ctxt term {
             (#f wctxt) cond orelse (#f wctxt) tt orelse (#f wctxt) tf),
           casec = (fn wctxt => fn t => fn cs =>
             (#f wctxt) t orelse List.foldr (or (rem_abs (#f wctxt))) false cs),
-          letc = (fn wctxt => fn _ => fn exp => fn _ => fn _ => fn t =>
+          letc = (fn wctxt => fn _ => fn exp => fn _ => fn t =>
             (#f wctxt) exp orelse (#f wctxt) t)
       }) o get_r
 fun is_rec ctxt (term: term list) = List.foldr (or (find_rec ctxt term)) false
@@ -290,8 +282,8 @@ fun is_rec ctxt (term: term list) = List.foldr (or (find_rec ctxt term)) false
 (* 2.2 Check for higher-order function if original function is used *)
 fun find_used' ctxt term t T_t =
 let
-  val (ident, _) = walk_func (get_l t) []
-  val (T_ident, T_args) = walk_func (get_l T_t) []
+  val (ident, _) = strip_comb (get_l t)
+  val (T_ident, T_args) = strip_comb (get_l T_t)
 
   fun filter_passed [] = []
     | filter_passed ((f as Free (_, Type ("Product_Type.prod",[Type ("fun",_), Type ("fun", _)])))::args) = 
@@ -305,7 +297,7 @@ let
           constc = (K o K) [],
           ifc = (fn wctxt => fn _ => fn cond => fn tt => fn tf => (#f wctxt) cond @ (#f wctxt) tt @ (#f wctxt) tf),
           casec = (fn wctxt => fn _ => fn cs => List.foldr (fn (l,r) => (#f wctxt) l @ r) [] cs),
-          letc = (fn wctxt => fn _ => fn exp => fn _ => fn _ => fn t => (#f wctxt) exp @ (#f wctxt) t)
+          letc = (fn wctxt => fn _ => fn exp => fn _ => fn t => (#f wctxt) exp @ (#f wctxt) t)
       }) (get_r T_t)
   fun build _ [] _ = false
     | build i (a::args) item =
@@ -387,7 +379,7 @@ let
 in
   List.foldr (I #-> plus)
   (case fun_to_time (#ctxt wctxt) orig_used used (#origins wctxt) func
-    of SOME t => SOME (build_func (t,funcc_conv_args wctxt used (get_T t) args))
+    of SOME t => SOME (list_comb (t,funcc_conv_args wctxt used (get_T t) args))
     | NONE => NONE)
   (map (#f wctxt) args)
 end
@@ -413,7 +405,7 @@ fun casec wctxt (Const (t,T)) args =
       plus
         ((#f wctxt) (List.last args))
         (if nconst then
-          SOME (build_func (Const (t,casecTyp T), args'))
+          SOME (list_comb (Const (t,casecTyp T), args'))
          else NONE)
     end
   | casec _ _ _ = error "Internal error: Invalid case term"
@@ -433,9 +425,9 @@ fun ifc wctxt _ cond tt ft =
 
 fun letc_change_typ (Type ("fun", [T1, Type ("fun", [T2, _])])) = (Type ("fun", [T1, Type ("fun", [change_typ T2, HOLogic.natT])]))
   | letc_change_typ _ = error "Internal error: invalid let type"
-fun letc wctxt expT exp nms Ts t =
+fun letc wctxt expT exp abs t =
     plus (#f wctxt exp)
-    (if length nms = 0 (* In case of "length nms = 0" the expression got reducted
+    (if length abs = 0 (* In case of "length nms = 0" the expression got reducted
                           Here we need Bound 0 to gain non-partial application *)
     then (case #f wctxt (t $ Bound 0) of SOME (t' $ Bound 0) =>
                                  (SOME (Const (@{const_name "HOL.Let"}, letc_change_typ expT) $ (map_aterms use_origin exp) $ t'))
@@ -443,7 +435,7 @@ fun letc wctxt expT exp nms Ts t =
                                 | SOME t' => SOME t'
                                 | NONE => NONE)
     else (case #f wctxt t of SOME t' =>
-      SOME (if Term.is_dependent t' then Const (@{const_name "HOL.Let"}, letc_change_typ expT) $ (map_aterms use_origin exp) $ build_abs t' nms Ts
+      SOME (if Term.is_dependent t' then Const (@{const_name "HOL.Let"}, letc_change_typ expT) $ (map_aterms use_origin exp) $ build_abs t' abs
                                     else Term.subst_bounds([exp],t'))
     | NONE => NONE))
 
@@ -466,7 +458,7 @@ fun to_time ctxt origin is_rec orig_used used term =
 (* Converts a term to its running time version *)
 fun convert_term ctxt (origin: term list) is_rec orig_used (pT $ (Const (eqN, _) $ l $ r)) =
 let
-  val (l' as (l_const, l_params)) = walk_func l []
+  val (l' as (l_const, l_params)) = strip_comb l
   val used =
     l_const
     |> used_for_const orig_used
@@ -474,7 +466,7 @@ let
 in
       pT
       $ (Const (eqN, @{typ "nat \<Rightarrow> nat \<Rightarrow> bool"})
-        $ (build_func (l' |>> (fun_to_time ctxt orig_used used origin) |>> Option.valOf ||> conv_args ctxt used origin))
+        $ (list_comb (l' |>> (fun_to_time ctxt orig_used used origin) |>> Option.valOf ||> conv_args ctxt used origin))
         $ (to_time ctxt origin is_rec orig_used used r))
 end
   | convert_term _ _ _ _ _ = error "Internal error: invalid term to convert"
@@ -495,7 +487,7 @@ let
    handle Empty => error "Function or terms of function not found"
 in
   equations
-    |> filter (fn ts => typ_comp (ts |> hd |> get_l |> walk_func' |> fst |> dest_Const |> snd) (term |> dest_Const |> snd))
+    |> filter (fn ts => typ_comp (ts |> hd |> get_l |> strip_comb |> fst |> dest_Const |> snd) (term |> dest_Const |> snd))
     |> hd
 end
 
