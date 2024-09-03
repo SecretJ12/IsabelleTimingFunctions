@@ -90,7 +90,6 @@ fun print_timing ctxt (oinfo: Function.info) (tinfo: Function.info) =
 
 fun contains l e = exists (fn e' => e' = e) l
 fun contains' comp l e = exists (comp e) l
-fun used_for_const orig_used t i = orig_used (t,i)
 (* Split name by . *)
 val split_name = String.fields (fn s => s = #".")
 
@@ -161,9 +160,20 @@ let
 in
 (SOME (Syntax.check_term ctxt (Const (T_nm,T_T))))
   handle (ERROR _) =>
+    (* Handle reduced functions *)
     case Syntax.read_term ctxt (Long_Name.base_name T_nm)
-      of (Const (T_nm,_)) =>
-        SOME (Const (T_nm,change_typ T))
+      of (Const (T_nm,T_T)) =>
+        let
+          fun adjustType (Type ("fun", [t1 as Type ("fun", _),t2])) (Type ("fun", [T1, T2])) =
+              Type ("fun", [(if is_Used T1
+                then HOLogic.mk_prodT (t1, change_typ t1)
+                else change_typ t1), adjustType t2 T2])
+            | adjustType (Type ("fun", [t1, t2])) (Type ("fun", [_,T2])) =
+              Type ("fun", [t1, adjustType t2 T2])
+            | adjustType _ _ = HOLogic.natT   
+        in
+          SOME (Const (T_nm,adjustType T T_T))
+        end
        | _ => error ("Timing function of " ^ nm ^ " is not defined")
 end
   | time_term _ _ _ = error "Internal error: No valid function given"
