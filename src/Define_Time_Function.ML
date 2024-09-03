@@ -34,6 +34,7 @@ structure Timing_Functions : TIMING_FUNCTIONS =
 struct
 (* Configure config variable to adjust the prefix *)
 val bprefix = Attrib.setup_config_string @{binding "time_prefix"} (K "T_")
+val bprefix_snd = Attrib.setup_config_string @{binding "time_prefix_snd"} (K "t_")
 (* Configure config variable to adjust the suffix *)
 val bsuffix = Attrib.setup_config_string @{binding "time_suffix"} (K "")
 
@@ -303,8 +304,22 @@ let
 in
   build 0 T_args
 end
-val find_used = List.foldr (op @) [] o List.map find_used'
-
+fun find_simplifyble ctxt term terms =
+let
+  val used =
+    terms
+    |> List.map find_used'
+    |> List.foldr (op @) []
+  fun change (t as Const (_,T)) =
+    Free (fun_name_to_time ctxt true (Term.term_name t),change_typ T)
+    | change _ = error "Invalid term given"
+  fun detect t i (Type ("fun",_)::args) = 
+    (if contains used (change t,i) then [] else [(t,i)]) @ detect t (i+1) args
+    | detect t i (_::args) = detect t (i+1) args
+    | detect _ _ [] = []
+in
+  map (fn t => t |> type_of |> strip_type |> fst |> detect t 0) term
+end
 
 (* 3. Convert equations *)
 (* Some Helper *)
@@ -500,10 +515,13 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
     *)
     val T_terms = map (convert_term lthy term is_rec) terms
 
-    (* TODO simplify *)
-    val _ = if null (find_used T_terms)
-      then ()
-      else Pretty.writeln (Pretty.str "The function can be simplified")
+    val simplifyable = find_simplifyble lthy term T_terms
+    fun simpable ((t,i)::ts) =
+    (Pretty.writeln (Pretty.str
+      ("Found something " ^ (Term.term_name t) ^ " can be reduced at index " ^ (Int.toString i)));
+     simpable ts)
+      | simpable [] = ()
+    val _ = map simpable simplifyable
 
     (* 4. Register function and prove termination *)
     val names = map Term.term_name term
