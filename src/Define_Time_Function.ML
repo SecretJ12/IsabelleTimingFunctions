@@ -34,7 +34,7 @@ structure Timing_Functions : TIMING_FUNCTIONS =
 struct
 (* Configure config variable to adjust the prefix *)
 val bprefix = Attrib.setup_config_string @{binding "time_prefix"} (K "T_")
-val bprefix_snd = Attrib.setup_config_string @{binding "time_prefix_snd"} (K "t_")
+val bprefix_snd = Attrib.setup_config_string @{binding "time_prefix_snd"} (K "T2_")
 (* Configure config variable to adjust the suffix *)
 val bsuffix = Attrib.setup_config_string @{binding "time_suffix"} (K "")
 
@@ -495,6 +495,55 @@ in
   map (fn t => t |> type_of |> strip_type |> fst |> detect t 0) term
 end
 
+fun define_simp' term simplifyable ctxt =
+let
+  val thy_name = ctxt |> Proof_Context.theory_of |> Context.theory_name {long=false}
+
+  val orig_name = term |> dest_Const_name |> split_name |> List.last
+  val red_name = fun_name_to_time ctxt false orig_name
+  val full_name = thy_name ^ "." ^ fun_name_to_time' ctxt false true orig_name
+  val def = Binding.name (red_name ^ "_def")
+
+  val types = term |> dest_Const_type |> strip_type |> fst
+  val vars = Variable.variant_fixes (map (K "") types) ctxt |> fst
+  fun l_typs' i ((T as (Type ("fun",_)))::types) =
+    (if contains simplifyable i
+     then change_typ T
+     else HOLogic.mk_prodT (T,change_typ T))
+    :: l_typs' (i+1) types
+    | l_typs' i (T::types) = T :: l_typs' (i+1) types
+    | l_typs' _ [] = []
+  val l_typs = l_typs' 0 types
+  val lhs =
+    List.foldl (fn ((v,T),t) => t $ Free (v,T)) (Free (red_name,l_typs ---> HOLogic.natT)) (ListPair.zip (vars,l_typs))
+  fun fixType (TFree _) = HOLogic.natT
+    | fixType T = T
+  fun r_terms' i (v::vars) ((T as (Type ("fun",_)))::types) =
+    (if contains simplifyable i
+    then HOLogic.mk_prod (Const ("HOL.undefined", T |> strip_type ||> fixType |> (op --->)), Free (v,change_typ T))
+    else Free (v,HOLogic.mk_prodT (T,change_typ T)))
+    :: r_terms' (i+1) vars types
+    | r_terms' i (v::vars) (T::types) = Free (v,T) :: r_terms' (i+1) vars types
+    | r_terms' _ _ _ = []
+  val r_terms = r_terms' 0 vars types
+  val full_type = r_terms |> map type_of ---> HOLogic.natT
+  val full = Const (full_name, full_type)
+  val rhs = List.foldl (fn (a,t) => t $ a) full r_terms
+  val eq = (lhs, rhs) |> HOLogic.mk_eq |> HOLogic.mk_Trueprop
+  val (_, ctxt') = Specification.definition NONE [] [] ((def, []), eq) ctxt
+  val _ = Pretty.writeln (Pretty.block [Pretty.str "Defining alias\n",
+                                        Syntax.pretty_term ctxt' eq])
+in
+  ctxt'
+end
+fun define_simp terms simplifyables ctxt =
+let
+  fun cond ((term,simplifyable),ctxt) =
+    (if null simplifyable then ctxt else define_simp' term simplifyable ctxt)
+in
+  List.foldr cond ctxt (ListPair.zip (terms, simplifyables))
+end
+
 (* Register timing function of a given function *)
 fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) print =
   let
@@ -533,7 +582,6 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       simplifyable
       |> (fn s => ListPair.zip (term,s))
       |> map simpable
-
     (* Rename to secondary if simpable *)
     fun rename (SOME t,T_terms) =
       let
@@ -581,13 +629,14 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
         end
 
   in
-    register false
+    (register false
       handle (ERROR _) =>
         register true
            | Match =>
-        register true
+        register true)
+      ||> define_simp term simplifyable
   end
-fun proove_termination (term: term list) terms print (T_info: Function.info, lthy: local_theory) =
+fun proove_termination (term: term list) terms (T_info: Function.info, lthy: local_theory) =
   let
     (* Start proving the termination *)  
     val infos = SOME (map (Function.get_info lthy) term) handle Empty => NONE
@@ -627,25 +676,12 @@ fun proove_termination (term: term list) terms print (T_info: Function.info, lth
           Function.prove_termination NONE
             (auto_tac simp_lthy) lthy
         end
-
-    (* Context for printing without showing question marks *)
-    val print_ctxt = lthy'
-      |> Config.put show_question_marks false
-      |> Config.put show_sorts false (* Change it for debugging *)
-    (* Print result if print *)
-    val _ = if not print then () else
-        let
-          val nms = map (fst o dest_Const) term
-          val typs = map (snd o dest_Const) term
-        in
-          print_timing' print_ctxt { names=nms, terms=terms, typs=typs } (info_pfunc time_info)
-        end
   in
     (time_info, lthy')
   end
 fun reg_and_proove_time_func (lthy: local_theory) (term: term list) (terms: term list) print =
-  reg_time_func lthy term terms false
-  |> proove_termination term terms print
+  reg_time_func lthy term terms print
+  |> proove_termination term terms
 
 fun fix_definition (Const ("Pure.eq", _) $ l $ r) = Const ("HOL.Trueprop", @{typ "bool \<Rightarrow> prop"})
       $ (Const ("HOL.eq", @{typ "bool \<Rightarrow> bool \<Rightarrow> bool"}) $ l $ r)

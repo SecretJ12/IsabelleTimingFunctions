@@ -220,10 +220,12 @@ fun leng :: "'a list \<Rightarrow> nat" where
 time_fun leng
 lemma leng: "T_leng xs = Suc (length xs)"
   by (induction xs) auto
-lemma "T_map T_leng xs = Suc (length xs) + length xs + foldr ((+) o length) xs 0"
-  by (induction xs) (auto simp: leng)
-lemma "T_map T_leng xs = t_map T_leng xs"
+lemma "T2_map (undefined,T_leng) xs = t_map T_leng xs"
   by (induction xs) auto
+lemma T2_map: "T2_map (undefined,T_leng) xs = Suc (length xs) + length xs + foldr ((+) o length) xs 0"
+  by (induction xs) (auto simp: leng)
+lemma "T_map T_leng xs = Suc (length xs) + length xs + foldr ((+) o length) xs 0"
+  by (simp add: T_map_def T2_map)
 
 text \<open>Functions with function should be called correctly\<close>
 fun is_zero :: "nat \<Rightarrow> bool" where "is_zero 0 = True" | "is_zero _ = False"
@@ -237,8 +239,10 @@ fun t_is_zero :: "nat \<Rightarrow> nat" where
 fun t_filter :: "('a \<Rightarrow> nat) \<Rightarrow> 'a list \<Rightarrow> nat" where
   "t_filter _ [] = 1"
 | "t_filter t_p (x#xs) = 1 + t_filter t_p xs + t_p x"
-lemma filter: "t_filter t_p xs = T_filter t_p xs"
+lemma filter: "t_filter t_p xs = T2_filter (undefined,t_p) xs"
   by (induction xs) auto
+lemma "t_filter t_p xs = T_filter t_p xs"
+  by (simp add: filter T_filter_def)
 fun t_find_zero :: "nat list \<Rightarrow> nat" where
   "t_find_zero xs = t_filter t_is_zero xs"
 lemma "t_find_zero xs = T_find_zero xs"
