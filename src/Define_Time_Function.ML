@@ -34,6 +34,7 @@ structure Timing_Functions : TIMING_FUNCTIONS =
 struct
 (* Configure config variable to adjust the prefix *)
 val bprefix = Attrib.setup_config_string @{binding "time_prefix"} (K "T_")
+val bprefix_snd = Attrib.setup_config_string @{binding "time_prefix_snd"} (K "T2_")
 (* Configure config variable to adjust the suffix *)
 val bsuffix = Attrib.setup_config_string @{binding "time_suffix"} (K "")
 
@@ -111,13 +112,13 @@ fun change_typ' used (Type ("fun", [T1, T2])) =
       Type ("fun", [check_for_fun' (used 0) T1, change_typ' (fn i => used (i+1)) T2])
   | change_typ' _ _ = HOLogic.natT
 and check_for_fun' true (f as Type ("fun", [_,_])) = HOLogic.mk_prodT (f, change_typ' (K false) f)
-  | check_for_fun' false (f as Type ("fun", [_,_])) = change_typ' (K false) f
+  | check_for_fun' false (f as Type ("fun", [_,_])) = change_typ' (K true) f
   | check_for_fun' _ t = t
-val change_typ = change_typ' (K false)
+val change_typ = change_typ' (K true)
 (* Convert string name of function to its timing equivalent *)
-fun fun_name_to_time ctxt s name =
+fun fun_name_to_time' ctxt s second name =
 let
-  val prefix = Config.get ctxt bprefix
+  val prefix = Config.get ctxt (if second then bprefix_snd else bprefix)
   val suffix = (if s then Config.get ctxt bsuffix else "")
   fun replace_last_name [n] = [prefix ^ n ^ suffix]
     | replace_last_name (n::ns) = n :: (replace_last_name ns)
@@ -126,6 +127,7 @@ let
 in
   String.concatWith "." (replace_last_name parts)
 end
+fun fun_name_to_time ctxt s name = fun_name_to_time' ctxt s false name
 (* Count number of arguments of a function *)
 fun count_args (Type (n, [_,res])) = (if n = "fun" then 1 + count_args res else 0)
   | count_args _ = 0
@@ -279,38 +281,6 @@ fun find_rec ctxt term = (walk ctxt term {
       }) o get_r
 fun is_rec ctxt (term: term list) = List.foldr (or (find_rec ctxt term)) false
 
-(* 2.2 Check for higher-order function if original function is used *)
-fun find_used' ctxt term t T_t =
-let
-  val (ident, _) = strip_comb (get_l t)
-  val (T_ident, T_args) = strip_comb (get_l T_t)
-
-  fun filter_passed [] = []
-    | filter_passed ((f as Free (_, Type ("Product_Type.prod",[Type ("fun",_), Type ("fun", _)])))::args) = 
-        f :: filter_passed args
-    | filter_passed (_::args) = filter_passed args
-  val frees' = (walk ctxt term {
-          funcc = (fn wctxt => fn t => fn args =>
-              (case t of (Const ("Product_Type.prod.snd", _)) => []
-                  | _ => (if t = T_ident then [] else filter_passed args)
-                    @ List.foldr (fn (l,r) => (#f wctxt) l @ r) [] args)),
-          constc = (K o K) [],
-          ifc = (fn wctxt => fn _ => fn cond => fn tt => fn tf => (#f wctxt) cond @ (#f wctxt) tt @ (#f wctxt) tf),
-          casec = (fn wctxt => fn _ => fn cs => List.foldr (fn (l,r) => (#f wctxt) l @ r) [] cs),
-          letc = (fn wctxt => fn _ => fn exp => fn _ => fn t => (#f wctxt) exp @ (#f wctxt) t)
-      }) (get_r T_t)
-  fun build _ [] _ = false
-    | build i (a::args) item =
-        (if item = (ident,i) then contains frees' a else build (i+1) args item)
-in
-  build 0 T_args
-end
-fun find_used ctxt term terms T_terms =
-  ListPair.zip (terms, T_terms)
-  |> List.map (fn (t, T_t) => find_used' ctxt term t T_t)
-  |> List.foldr (fn (f,g) => fn item => f item orelse g item) (K false)
-
-
 (* 3. Convert equations *)
 (* Some Helper *)
 val plusTyp = @{typ "nat => nat => nat"}
@@ -324,19 +294,20 @@ fun use_origin (Free (nm, T as Type ("fun",_))) = HOLogic.mk_fst (Free (nm,HOLog
   | use_origin t = t
 
 (* Conversion of function term *)
-fun fun_to_time ctxt orig_used _ (origin: term list) (func as Const (nm,T)) =
+fun fun_to_time' ctxt orig_used _ (origin: term list) second (func as Const (nm,T)) =
 let
   val used' = used_for_const orig_used func
 in
-  if contains' const_comp origin func then SOME (Free (func |> Term.term_name |> fun_name_to_time ctxt true, change_typ' used' T)) else
+  if contains' const_comp origin func then SOME (Free (func |> Term.term_name |> fun_name_to_time' ctxt true second, change_typ' used' T)) else
   if Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) (nm,T) then NONE else
     time_term ctxt false func
 end
-  | fun_to_time ctxt _ used _ (f as Free (nm,T)) = SOME (
+  | fun_to_time' ctxt _ used _ second (f as Free (nm,T)) = SOME (
       if used f then HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
-      else Free (fun_name_to_time ctxt false nm, change_typ T)
+      else Free (fun_name_to_time' ctxt false second nm, change_typ T)
       )
-  | fun_to_time _ _ _ _ _ = error "Internal error: invalid function to convert"
+  | fun_to_time' _ _ _ _ _ _ = error "Internal error: invalid function to convert"
+fun fun_to_time context orig_used used origin func = fun_to_time' context orig_used used origin false func
 
 (* Convert arguments of left side of a term *)
 fun conv_arg ctxt used _ (f as Free (nm,T as Type("fun",_))) =
@@ -491,6 +462,93 @@ in
     |> hd
 end
 
+(* 5. Check for higher-order function if original function is used *)
+fun find_used' T_t =
+let
+  val (T_ident, T_args) = strip_comb (get_l T_t)
+
+  fun filter_passed [] = []
+    | filter_passed ((f as Free (_, Type ("Product_Type.prod",[Type ("fun",_), Type ("fun", _)])))::args) = 
+        f :: filter_passed args
+    | filter_passed (_::args) = filter_passed args
+  val frees = (walk @{context} [] {
+          funcc = (fn wctxt => fn t => fn args =>
+              (case t of (Const ("Product_Type.prod.snd", _)) => []
+                  | _ => (if t = T_ident then [] else filter_passed args)
+                    @ List.foldr (fn (l,r) => (#f wctxt) l @ r) [] args)),
+          constc = (K o K) [],
+          ifc = (fn wctxt => fn _ => fn cond => fn tt => fn tf => (#f wctxt) cond @ (#f wctxt) tt @ (#f wctxt) tf),
+          casec = (fn wctxt => fn _ => fn cs => List.foldr (fn (l,r) => (#f wctxt) l @ r) [] cs),
+          letc = (fn wctxt => fn _ => fn exp => fn _ => fn t => (#f wctxt) exp @ (#f wctxt) t)
+      }) (get_r T_t)
+  fun build _ [] = []
+    | build i (a::args) =
+        (if contains frees a then [(T_ident,i)] else []) @ build (i+1) args
+in
+  build 0 T_args
+end
+fun find_simplifyble ctxt term terms =
+let
+  val used =
+    terms
+    |> List.map find_used'
+    |> List.foldr (op @) []
+  val change =
+    Option.valOf o fun_to_time ctxt (K true) (K true) term
+  fun detect t i (Type ("fun",_)::args) = 
+    (if contains used (change t,i) then [] else [i]) @ detect t (i+1) args
+    | detect t i (_::args) = detect t (i+1) args
+    | detect _ _ [] = []
+in
+  map (fn t => t |> type_of |> strip_type |> fst |> detect t 0) term
+end
+
+fun define_simp' term simplifyable ctxt =
+let
+  val orig_name = term |> dest_Const_name |> split_name |> List.last
+  val red_name = fun_name_to_time ctxt false orig_name
+  val full_name = fun_name_to_time' ctxt true true orig_name
+  val def = Binding.name (red_name ^ "_def")
+
+  val types = term |> dest_Const_type |> strip_type |> fst
+  val vars = Variable.variant_fixes (map (K "") types) ctxt |> fst
+  fun l_typs' i ((T as (Type ("fun",_)))::types) =
+    (if contains simplifyable i
+     then change_typ T
+     else HOLogic.mk_prodT (T,change_typ T))
+    :: l_typs' (i+1) types
+    | l_typs' i (T::types) = T :: l_typs' (i+1) types
+    | l_typs' _ [] = []
+  val l_typs = l_typs' 0 types
+  val lhs =
+    List.foldl (fn ((v,T),t) => t $ Free (v,T)) (Free (red_name,l_typs ---> HOLogic.natT)) (ListPair.zip (vars,l_typs))
+  fun r_terms' i (v::vars) ((T as (Type ("fun",_)))::types) =
+    (if contains simplifyable i
+    then HOLogic.mk_prod (Const ("HOL.undefined", T), Free (v,change_typ T))
+    else Free (v,HOLogic.mk_prodT (T,change_typ T)))
+    :: r_terms' (i+1) vars types
+    | r_terms' i (v::vars) (T::types) = Free (v,T) :: r_terms' (i+1) vars types
+    | r_terms' _ _ _ = []
+  val r_terms = r_terms' 0 vars types
+  val full_type = r_terms |> map type_of ---> HOLogic.natT
+  val full = Free (full_name,full_type)
+  val rhs = List.foldl (fn (a,t) => t $ a) full r_terms
+  val eq = (lhs, rhs) |> HOLogic.mk_eq |> HOLogic.mk_Trueprop
+  val _ = Pretty.writeln (Pretty.block [Pretty.str "Defining alias\n",
+                                        Syntax.pretty_term ctxt eq])
+  val ((_, (_,thm)), ctxt') = Specification.definition NONE [] [] ((def, []), eq) ctxt
+in
+  (thm, ctxt')
+end
+fun define_simp terms simplifyables ctxt =
+let
+  fun cond ((term,simplifyable),(thms,ctxt)) =
+    (if null simplifyable then (thms,ctxt)
+      else define_simp' term simplifyable ctxt |>> (fn thm => thm :: thms))
+in
+  List.foldr cond ([],ctxt) (ListPair.zip (terms, simplifyables))
+end
+
 (* Register timing function of a given function *)
 fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) print =
   let
@@ -517,25 +575,49 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       - On left side change name of function to timing function
       - Convert right side of equation with conversion schema
     *)
-    fun convert used = map (convert_term lthy term is_rec used)
-    fun repeat T_terms =
+    val T_terms = map (convert_term lthy term is_rec (K true)) terms
+
+    val simplifyable = find_simplifyble lthy term T_terms
+    fun detectRename (t,_::_) = SOME t
+      | detectRename (_,[]) = NONE
+    val renaming =
+      simplifyable
+      |> (fn s => ListPair.zip (term,s))
+      |> map detectRename
+    (* Rename to secondary if simpable *)
+    fun rename (SOME t,T_terms) =
       let
-        val orig_used = find_used lthy term terms T_terms
-        val T_terms' = convert orig_used terms
+        val old = fun_to_time lthy (K true) (K true) term t |> Option.valOf
+        val new = fun_to_time' lthy (K true) (K true) term true t |> Option.valOf
       in
-        if T_terms' <> T_terms then repeat T_terms' else T_terms'
+        map (map_aterms (fn t => if t = old then new else t)) T_terms
       end
-    val T_terms = repeat (convert (K true) terms)
-    val orig_used = find_used lthy term terms T_terms
+      | rename (_,T_terms) = T_terms
+    val T_terms = List.foldr rename T_terms renaming
 
     (* 4. Register function and prove termination *)
     val names = map Term.term_name term
-    val timing_names = map (fun_name_to_time lthy true) names
+    val timing_names = map (fn (r,nm) => fun_name_to_time' lthy true (Option.isSome r) nm) (ListPair.zip (renaming,names))
     val bindings = map (fn nm => (Binding.name nm, NONE, NoSyn)) timing_names
     fun pat_completeness_auto ctxt =
       Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
     val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) T_terms
 
+    (* Context for printing without showing question marks *)
+    val print_ctxt = lthy
+      |> Config.put show_question_marks false
+      |> Config.put show_sorts false (* Change it for debugging *)
+    val print_ctxt = List.foldl (fn (term, ctxt) => Variable.add_fixes_implicit term ctxt) print_ctxt (term @ T_terms)
+    (* Print result if print *)
+    val _ = if not print then () else
+        let
+          val nms = map (dest_Const_name) term
+          val typs = map (dest_Const_type) term
+        in
+          print_timing' print_ctxt { names=nms, terms=terms, typs=typs }
+            { names=timing_names, terms=T_terms, typs=map change_typ typs }
+        end
+    
     (* For partial functions sequential=true is needed in order to support them
        We need sequential=false to support the automatic proof of termination over dom
     *)
@@ -548,30 +630,90 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
         Function.add_function bindings specs fun_config pat_completeness_auto lthy
       end
 
-    (* Context for printing without showing question marks *)
-    val print_ctxt = lthy
-      |> Config.put show_question_marks false
-      |> Config.put show_sorts false (* Change it for debugging *)
-    val print_ctxt = List.foldl (fn (term, ctxt) => Variable.add_fixes_implicit term ctxt) print_ctxt (term @ T_terms)
-    (* Print result if print *)
-    val _ = if not print then () else
-        let
-          val nms = map (fst o dest_Const) term
-          val used = map (used_for_const orig_used) term
-          val typs = map (snd o dest_Const) term
-        in
-          print_timing' print_ctxt { names=nms, terms=terms, typs=typs }
-            { names=timing_names, terms=T_terms, typs=map (fn (used, typ) => change_typ' used typ) (ListPair.zip (used, typs)) }
-        end
+    val (info,ctxt) = 
+      register false
+        handle (ERROR _) =>
+          register true
+             | Match =>
+          register true
 
+    fun reportReductions (t,(i::is)) =
+    (Pretty.writeln (Pretty.str
+      ("Reduction detected: " ^ (Term.term_name t) ^ " can be reduced at index " ^ (Int.toString i)));
+        reportReductions (t,is))
+      | reportReductions (_,[]) = ()
+    val _ = simplifyable
+      |> (fn s => ListPair.zip (term,s))
+      |> map reportReductions
+
+    val (defs,ctxt) = define_simp term simplifyable ctxt
+
+    fun used (t,i) =
+      List.exists
+      (fn (t',i') => if t = t' then contains i' i else false)
+      (ListPair.zip (term,simplifyable))
+      |> not
+    fun convert_red t =
+      if t |> get_l |> strip_comb |> fst |> SOME |> contains renaming
+      then SOME (t |> get_l |> strip_comb |> snd, convert_term lthy term is_rec used t)
+      else NONE
+
+    val T_terms_red = terms
+      |> List.mapPartial convert_red
+    val ctxt = if List.null T_terms_red then (ctxt)
+      else
+      let
+        val names = List.mapPartial I renaming |> map Term.term_name
+        val timing_names = map (fun_name_to_time lthy true) names
+    
+        (* Context for printing without showing question marks *)
+        val print_ctxt = lthy
+          |> Config.put show_question_marks false
+          |> Config.put show_sorts false (* Change it for debugging *)
+        val print_ctxt = List.foldl (fn (term, ctxt) => Variable.add_fixes_implicit term ctxt) print_ctxt (term @ T_terms)
+        (* Print result if print *)
+        val _ = if not print then () else
+            let
+              val nms = map (dest_Const_name) term
+              val typs = map (dest_Const_type) term
+              val timing_typs = renaming
+                |> List.mapPartial I
+                |> map (fn t => change_typ' (fn i => used (t,i)) (dest_Const_type t))
+            in
+              print_timing' print_ctxt { names=nms, terms=terms, typs=typs }
+                { names=timing_names, terms=map snd T_terms_red, typs=timing_typs }
+            end
+        val pctxt = List.foldl (fn (thm,ctxt) => Simplifier.add_simp thm ctxt) ctxt defs
+        val pctxt = List.foldl (fn (thm,ctxt) => Simplifier.add_simp thm ctxt) pctxt (#psimps info)
+        fun replaceArgs (Free (_,oT),Free (nm,T as Type ("fun",_))) =
+              HOLogic.mk_prod (Const ("HOL.undefined", oT), Free (nm,T))
+          | replaceArgs (_,t) = t
+        fun extractFrees (Free (nm,_)) = [nm]
+          | extractFrees (t1 $ t2) = extractFrees t1 @ extractFrees t2
+          | extractFrees _ = []
+        val thms = T_terms_red
+          |> map (fn t =>
+            let
+              val COND = t ||> get_l ||> strip_comb ||> snd
+                              |> ListPair.zip
+                              |> map replaceArgs
+                              |> (fn args => List.foldl (fn (l,r) => HOLogic.mk_prod (r,l)) (hd args) (tl args))
+                              |> (fn t => #dom info $ t)
+                              |> HOLogic.mk_Trueprop
+              val vars = t |> snd |> get_l |> strip_comb |> snd |> map extractFrees |> List.foldr (op @) []
+            in
+              (vars, Logic.mk_implies (COND, snd t))
+            end)
+          |> map (fn (vars,goal) => Goal.prove pctxt vars [] goal (fn {context, ...} => auto_tac context))
+        val cor_nm = timing_names |> hd |> (fn s => s ^ "_cor") |> Binding.name
+        val (_,ctxt) = Local_Theory.note ((cor_nm, []), thms) ctxt
+      in
+        ctxt
+      end
   in
-    register false
-      handle (ERROR _) =>
-        register true
-           | Match =>
-        register true
+    (info,ctxt)
   end
-fun proove_termination (term: term list) terms print (T_info: Function.info, lthy: local_theory) =
+fun proove_termination (term: term list) terms (T_info: Function.info, lthy: local_theory) =
   let
     (* Start proving the termination *)  
     val infos = SOME (map (Function.get_info lthy) term) handle Empty => NONE
@@ -611,25 +753,12 @@ fun proove_termination (term: term list) terms print (T_info: Function.info, lth
           Function.prove_termination NONE
             (auto_tac simp_lthy) lthy
         end
-
-    (* Context for printing without showing question marks *)
-    val print_ctxt = lthy'
-      |> Config.put show_question_marks false
-      |> Config.put show_sorts false (* Change it for debugging *)
-    (* Print result if print *)
-    val _ = if not print then () else
-        let
-          val nms = map (fst o dest_Const) term
-          val typs = map (snd o dest_Const) term
-        in
-          print_timing' print_ctxt { names=nms, terms=terms, typs=typs } (info_pfunc time_info)
-        end
   in
     (time_info, lthy')
   end
 fun reg_and_proove_time_func (lthy: local_theory) (term: term list) (terms: term list) print =
-  reg_time_func lthy term terms false
-  |> proove_termination term terms print
+  reg_time_func lthy term terms print
+  |> proove_termination term terms
 
 fun fix_definition (Const ("Pure.eq", _) $ l $ r) = Const ("HOL.Trueprop", @{typ "bool \<Rightarrow> prop"})
       $ (Const ("HOL.eq", @{typ "bool \<Rightarrow> bool \<Rightarrow> bool"}) $ l $ r)
