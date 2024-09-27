@@ -694,58 +694,6 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       |> List.mapPartial convert_red
     val _ = if List.null T_terms_red then ()
       else print_lemma ctxt defs T_terms_red
-
-    (*
-    val ctxt = if List.null T_terms_red then (ctxt)
-      else
-      let
-        val names = List.mapPartial I renaming |> map Term.term_name
-        val timing_names = map (fun_name_to_time lthy true) names
-    
-        (* Context for printing without showing question marks *)
-        val print_ctxt = lthy
-          |> Config.put show_question_marks false
-          |> Config.put show_sorts false (* Change it for debugging *)
-        val print_ctxt = List.foldl (fn (term, ctxt) => Variable.add_fixes_implicit term ctxt) print_ctxt (term @ T_terms)
-        (* Print result if print *)
-        val _ = if not print then () else
-            let
-              val nms = map (dest_Const_name) term
-              val typs = map (dest_Const_type) term
-              val timing_typs = renaming
-                |> List.mapPartial I
-                |> map (fn t => change_typ' (fn i => used (t,i)) (dest_Const_type t))
-            in
-              print_timing' print_ctxt { names=nms, terms=terms, typs=typs }
-                { names=timing_names, terms=map snd T_terms_red, typs=timing_typs }
-            end
-        val pctxt = List.foldl (fn (thm,ctxt) => Simplifier.add_simp thm ctxt) ctxt defs
-        val pctxt = List.foldl (fn (thm,ctxt) => Simplifier.add_simp thm ctxt) pctxt (#psimps info)
-        fun replaceArgs (Free (_,oT),Free (nm,T as Type ("fun",_))) =
-              HOLogic.mk_prod (Const ("HOL.undefined", oT), Free (nm,T))
-          | replaceArgs (_,t) = t
-        fun extractFrees (Free (nm,_)) = [nm]
-          | extractFrees (t1 $ t2) = extractFrees t1 @ extractFrees t2
-          | extractFrees _ = []
-        val thms = T_terms_red
-          |> map (fn t =>
-            let
-              val COND = t ||> get_l ||> strip_comb ||> snd
-                              |> ListPair.zip
-                              |> map replaceArgs
-                              |> (fn args => List.foldl (fn (l,r) => HOLogic.mk_prod (r,l)) (hd args) (tl args))
-                              |> (fn t => #dom info $ t)
-                              |> HOLogic.mk_Trueprop
-              val vars = t |> snd |> get_l |> strip_comb |> snd |> map extractFrees |> List.foldr (op @) []
-            in
-              (vars, Logic.mk_implies (COND, snd t))
-            end)
-          |> map (fn (vars,goal) => Goal.prove pctxt vars [] goal (fn {context, ...} => auto_tac context))
-        val cor_nm = timing_names |> hd |> (fn s => s ^ "_cor") |> Binding.name
-        val (_,ctxt) = Local_Theory.note ((cor_nm, []), thms) ctxt
-      in
-        ctxt
-      end *)
   in
     (info,ctxt)
   end

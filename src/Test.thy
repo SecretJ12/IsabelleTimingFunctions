@@ -215,8 +215,13 @@ fun t_map :: "('a \<Rightarrow> nat) \<Rightarrow> 'a list \<Rightarrow> nat" wh
   "t_map f [] = 1"
 | "t_map f (x#xs) = 1 + f x + t_map f xs"
 time_fun map
+lemma [simp,code]:
+  "T_map T_f [] = 1"
+  "T_map T_f (x21 # x22) = T_f x21 + T_map T_f x22 + 1"
+  by (simp_all add: T_map_def)
 fun leng :: "'a list \<Rightarrow> nat" where
-  "leng [] = 0" | "leng (x#xs) = Suc (leng xs)"
+  "leng [] = 0"
+| "leng (x#xs) = Suc (leng xs)"
 time_fun leng
 lemma leng: "T_leng xs = Suc (length xs)"
   by (induction xs) auto
@@ -231,6 +236,10 @@ fun find_zero :: "nat list \<Rightarrow> nat list" where
   "find_zero xs = filter is_zero xs"
 time_fun is_zero
 time_fun filter
+lemma [simp,code]:
+  "T_filter T_P [] = 1"
+  "T_filter T_P (x # xs) = T_P x + T_filter T_P xs + 1"
+  by (simp_all add: T_filter_def)
 time_fun find_zero
 fun t_is_zero :: "nat \<Rightarrow> nat" where
   "t_is_zero n = 0"
