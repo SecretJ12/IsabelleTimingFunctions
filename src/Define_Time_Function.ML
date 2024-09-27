@@ -86,15 +86,27 @@ let
   val poriginal = Pretty.item [Pretty.str "Original function:\n", fun_pretty' ctxt opfunc]
   val ptiming = Pretty.item [Pretty.str ("Running time function:\n"), fun_pretty' ctxt tpfunc]
 in
-  Pretty.writeln (Pretty.text_fold [Pretty.str ("Converting " ^ (hd names) ^ (String.concat (map (fn nm => ", " ^ nm) (tl names))) ^ "\n"), poriginal, Pretty.str "\n", ptiming])
+  Pretty.writeln (Pretty.text_fold [
+      Pretty.str ("Converting " ^ (hd names) ^ (String.concat (map (fn nm => ", " ^ nm) (tl names))) ^ "\n"),
+      poriginal, Pretty.str "\n", ptiming])
 end
 fun print_timing ctxt (oinfo: Function.info) (tinfo: Function.info) =
   print_timing' ctxt (info_pfunc oinfo) (info_pfunc tinfo)
 
-fun print_lemma (terms: term list) =
+fun print_lemma ctxt defs (T_terms: term list) =
 let
+  val begin = Pretty.str "lemma [simp,code]:\n"
+  fun convLine T_term =
+    Pretty.text_fold [Pretty.str "  \"", Syntax.pretty_term ctxt T_term, Pretty.str "\"\n"]
+  val lines = map convLine T_terms
+  fun convDefs def =
+    Pretty.str (" " ^ def)
+  val proof = Pretty.text_fold (
+    Pretty.str "  by (simp_all add:" ::
+    map convDefs defs @ [Pretty.str ")"])
+  val _ = Pretty.writeln (Pretty.str "Simple function can be defined with the following lemma:")
 in
-  ()
+  Pretty.writeln (Pretty.text_fold (begin:: lines @ [proof]))
 end
 
 fun contains l e = exists (fn e' => e' = e) l
@@ -518,7 +530,8 @@ let
   val orig_name = term |> dest_Const_name |> split_name |> List.last
   val red_name = fun_name_to_time ctxt false orig_name
   val full_name = thy_name ^ "." ^ fun_name_to_time' ctxt true true orig_name
-  val def = Binding.name (red_name ^ "_def")
+  val def_name = red_name ^ "_def"
+  val def = Binding.name def_name
 
   val types = term |> dest_Const_type |> strip_type |> fst
   val vars = Variable.variant_fixes (map (K "") types) ctxt |> fst
@@ -551,15 +564,15 @@ let
                                         Syntax.pretty_term ctxt eq])
   val (_, ctxt') = Specification.definition NONE [] [] ((def, []), eq) ctxt
 in
-  ctxt'
+  (def_name, ctxt')
 end
 fun define_simp terms simplifyables ctxt =
 let
-  fun cond ((term,simplifyable),ctxt) =
-    (if null simplifyable then ctxt
-      else define_simp' term simplifyable ctxt)
+  fun cond ((term,simplifyable),(defs,ctxt)) =
+    (if null simplifyable then (defs,ctxt)
+      else define_simp' term simplifyable ctxt |>> (fn def => def :: defs))
 in
-  List.foldr cond ctxt (ListPair.zip (terms, simplifyables))
+  List.foldr cond ([], ctxt) (ListPair.zip (terms, simplifyables))
 end
 
 (* Register timing function of a given function *)
@@ -663,7 +676,7 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       |> map reportReductions
 
     (* Register definitions for simplified function *)
-    val ctxt = define_simp term simplifyable ctxt
+    val (defs, ctxt) = define_simp term simplifyable ctxt
 
     fun used (t,i) =
       List.exists
@@ -679,7 +692,7 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
     val T_terms_red = terms
       |> List.mapPartial convert_red
     val _ = if List.null T_terms_red then ()
-      else print_lemma T_terms_red
+      else print_lemma ctxt defs T_terms_red
 
     (*
     val ctxt = if List.null T_terms_red then (ctxt)
