@@ -91,6 +91,12 @@ end
 fun print_timing ctxt (oinfo: Function.info) (tinfo: Function.info) =
   print_timing' ctxt (info_pfunc oinfo) (info_pfunc tinfo)
 
+fun print_lemma (terms: term list) =
+let
+in
+  ()
+end
+
 fun contains l e = exists (fn e' => e' = e) l
 fun contains' comp l e = exists (comp e) l
 fun index [] _ = 0
@@ -507,9 +513,11 @@ end
 
 fun define_simp' term simplifyable ctxt =
 let
+  val thy_name = ctxt |> Proof_Context.theory_of |> Context.theory_name {long=false}
+
   val orig_name = term |> dest_Const_name |> split_name |> List.last
   val red_name = fun_name_to_time ctxt false orig_name
-  val full_name = fun_name_to_time' ctxt true true orig_name
+  val full_name = thy_name ^ "." ^ fun_name_to_time' ctxt true true orig_name
   val def = Binding.name (red_name ^ "_def")
 
   val types = term |> dest_Const_type |> strip_type |> fst
@@ -524,31 +532,34 @@ let
   val l_typs = l_typs' 0 types
   val lhs =
     List.foldl (fn ((v,T),t) => t $ Free (v,T)) (Free (red_name,l_typs ---> HOLogic.natT)) (ListPair.zip (vars,l_typs))
+  fun fixType (TFree _) = HOLogic.natT
+    | fixType T = T
+  fun fixUnspecified T = T |> strip_type ||> fixType |> (op --->)
   fun r_terms' i (v::vars) ((T as (Type ("fun",_)))::types) =
     (if contains simplifyable i
-    then HOLogic.mk_prod (Const ("HOL.undefined", T), Free (v,change_typ T))
+    then HOLogic.mk_prod (Const ("HOL.undefined", fixUnspecified T), Free (v,change_typ T))
     else Free (v,HOLogic.mk_prodT (T,change_typ T)))
     :: r_terms' (i+1) vars types
     | r_terms' i (v::vars) (T::types) = Free (v,T) :: r_terms' (i+1) vars types
     | r_terms' _ _ _ = []
   val r_terms = r_terms' 0 vars types
   val full_type = r_terms |> map type_of ---> HOLogic.natT
-  val full = Free (full_name,full_type)
+  val full = Const (full_name,full_type)
   val rhs = List.foldl (fn (a,t) => t $ a) full r_terms
   val eq = (lhs, rhs) |> HOLogic.mk_eq |> HOLogic.mk_Trueprop
   val _ = Pretty.writeln (Pretty.block [Pretty.str "Defining alias\n",
                                         Syntax.pretty_term ctxt eq])
-  val ((_, (_,thm)), ctxt') = Specification.definition NONE [] [] ((def, []), eq) ctxt
+  val (_, ctxt') = Specification.definition NONE [] [] ((def, []), eq) ctxt
 in
-  (thm, ctxt')
+  ctxt'
 end
 fun define_simp terms simplifyables ctxt =
 let
-  fun cond ((term,simplifyable),(thms,ctxt)) =
-    (if null simplifyable then (thms,ctxt)
-      else define_simp' term simplifyable ctxt |>> (fn thm => thm :: thms))
+  fun cond ((term,simplifyable),ctxt) =
+    (if null simplifyable then ctxt
+      else define_simp' term simplifyable ctxt)
 in
-  List.foldr cond ([],ctxt) (ListPair.zip (terms, simplifyables))
+  List.foldr cond ctxt (ListPair.zip (terms, simplifyables))
 end
 
 (* Register timing function of a given function *)
@@ -599,7 +610,7 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       | rename (_,T_terms) = T_terms
     val T_terms = List.foldr rename T_terms renaming
 
-    (* 4. Register function and prove termination *)
+    (* 4. Register function and prove completeness *)
     val names = map Term.term_name term
     val timing_names = map (fn (r,nm) => fun_name_to_time' lthy true (Option.isSome r) nm) (ListPair.zip (renaming,names))
     val bindings = map (fn nm => (Binding.name nm, NONE, NoSyn)) timing_names
@@ -641,6 +652,7 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
              | Match =>
           register true
 
+    (* Show where reduction can happen *)
     fun reportReductions (t,(i::is)) =
     (Pretty.writeln (Pretty.str
       ("Reduction detected: " ^ (Term.term_name t) ^ " can be reduced at index " ^ (Int.toString i)));
@@ -650,7 +662,8 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       |> (fn s => ListPair.zip (term,s))
       |> map reportReductions
 
-    val (defs,ctxt) = define_simp term simplifyable ctxt
+    (* Register definitions for simplified function *)
+    val ctxt = define_simp term simplifyable ctxt
 
     fun used (t,i) =
       List.exists
@@ -659,11 +672,16 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       |> not
     fun convert_red t =
       if t |> get_l |> strip_comb |> fst |> SOME |> contains renaming
-      then SOME (t |> get_l |> strip_comb |> snd, convert_term lthy term is_rec used t)
+      then SOME (convert_term lthy term is_rec used t)
       else NONE
 
+    (* Calculate reduced terms *)
     val T_terms_red = terms
       |> List.mapPartial convert_red
+    val _ = if List.null T_terms_red then ()
+      else print_lemma T_terms_red
+
+    (*
     val ctxt = if List.null T_terms_red then (ctxt)
       else
       let
@@ -713,7 +731,7 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
         val (_,ctxt) = Local_Theory.note ((cor_nm, []), thms) ctxt
       in
         ctxt
-      end
+      end *)
   in
     (info,ctxt)
   end
