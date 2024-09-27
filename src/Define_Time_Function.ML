@@ -95,18 +95,19 @@ fun print_timing ctxt (oinfo: Function.info) (tinfo: Function.info) =
 
 fun print_lemma ctxt defs (T_terms: term list) =
 let
-  val begin = Pretty.str "lemma [simp,code]:\n"
+  val begin = "lemma [simp,code]:\n"
   fun convLine T_term =
-    Pretty.text_fold [Pretty.str "  \"", Syntax.pretty_term ctxt T_term, Pretty.str "\"\n"]
+    "  \"" ^ Syntax.string_of_term ctxt T_term ^ "\"\n"
   val lines = map convLine T_terms
-  fun convDefs def =
-    Pretty.str (" " ^ def)
-  val proof = Pretty.text_fold (
-    Pretty.str "  by (simp_all add:" ::
-    map convDefs defs @ [Pretty.str ")"])
+  fun convDefs def = " " ^ def
+  val proof = "  by (simp_all add:" :: (map convDefs defs) @ [")"]
   val _ = Pretty.writeln (Pretty.str "Simple function can be defined with the following lemma:")
 in
-  Pretty.writeln (Pretty.text_fold (begin:: lines @ [proof]))
+  (begin :: lines @ proof)
+  |> String.concat
+  |> Active.sendback_markup_properties [Markup.padding_fun]
+  |> Pretty.str
+  |> Pretty.writeln
 end
 
 fun contains l e = exists (fn e' => e' = e) l
