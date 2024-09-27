@@ -32,6 +32,8 @@ end
 
 structure Timing_Functions : TIMING_FUNCTIONS =
 struct
+(* Configure if the function should automatically be reduced *)
+val reduce = Attrib.setup_config_bool @{binding "time_reduce"} (K true)
 (* Configure config variable to adjust the prefix *)
 val bprefix = Attrib.setup_config_string @{binding "time_prefix"} (K "T_")
 val bprefix_snd = Attrib.setup_config_string @{binding "time_prefix_snd"} (K "T2_")
@@ -577,7 +579,9 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
     *)
     val T_terms = map (convert_term lthy term is_rec (K true)) terms
 
-    val simplifyable = find_simplifyble lthy term T_terms
+    val simplifyable = if Config.get lthy reduce
+      then find_simplifyble lthy term T_terms
+      else map (K []) term
     fun detectRename (t,_::_) = SOME t
       | detectRename (_,[]) = NONE
     val renaming =
