@@ -22,9 +22,9 @@ val print_timing':  Proof.context -> pfunc -> pfunc -> unit
 val print_timing:  Proof.context -> Function.info -> Function.info -> unit
 
 val reg_and_proove_time_func: local_theory -> term list -> term list
-      -> bool -> Function.info * local_theory
+      -> bool -> bool -> Function.info * local_theory
 val reg_time_func: local_theory -> term list -> term list
-      -> bool -> Function.info * local_theory
+      -> bool -> bool -> Function.info * local_theory
 
 val time_dom_tac: Proof.context -> thm -> thm list -> int -> tactic
 
@@ -32,8 +32,6 @@ end
 
 structure Timing_Functions : TIMING_FUNCTIONS =
 struct
-(* Configure if the function should automatically be reduced *)
-val reduce = Attrib.setup_config_bool @{binding "time_reduce"} (K true)
 (* Configure config variable to adjust the prefix *)
 val bprefix = Attrib.setup_config_string @{binding "time_prefix"} (K "T_")
 val bprefix_snd = Attrib.setup_config_string @{binding "time_prefix_snd"} (K "T2_")
@@ -582,7 +580,7 @@ in
 end
 
 (* Register timing function of a given function *)
-fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) print =
+fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) print simp =
   let
     val _ =
       case time_term lthy true (hd term)
@@ -609,7 +607,7 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
     *)
     val T_terms = map (convert_term lthy term is_rec (K true)) terms
 
-    val simplifyable = if Config.get lthy reduce
+    val simplifyable = if simp
       then find_simplifyble lthy term T_terms
       else map (K []) term
     fun detectRename (t,_::_) = SOME t
@@ -700,8 +698,11 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
     val T_terms_red = terms
       |> List.mapPartial convert_red
     val _ = if List.null T_terms_red then ()
-      else print_lemma ctxt reds T_terms_red
-  in              
+      else (
+        print_lemma ctxt reds T_terms_red;
+        Pretty.writeln (Pretty.str "If you do not want the simplified T function, use \"time_fun [no_simp]\"")
+      )
+  in
     (info,ctxt)
   end
 fun proove_termination (term: term list) terms (T_info: Function.info, lthy: local_theory) =
@@ -747,8 +748,8 @@ fun proove_termination (term: term list) terms (T_info: Function.info, lthy: loc
   in
     (time_info, lthy')
   end
-fun reg_and_proove_time_func (lthy: local_theory) (term: term list) (terms: term list) print =
-  reg_time_func lthy term terms print
+fun reg_and_proove_time_func (lthy: local_theory) (term: term list) (terms: term list) print simp =
+  reg_time_func lthy term terms print simp
   |> proove_termination term terms
 
 fun fix_definition (Const ("Pure.eq", _) $ l $ r) = Const ("HOL.Trueprop", @{typ "bool \<Rightarrow> prop"})
@@ -789,43 +790,48 @@ in
 end
 
 (* Convert function into its timing function (called by command) *)
-fun reg_time_fun_cmd (funcs, thms) (ctxt: local_theory) =
+fun reg_time_fun_cmd ((opts, funcs), thms) (ctxt: local_theory) =
 let
+  val simp = contains opts "no_simp" |> not
   val fterms = map (Syntax.read_term ctxt) funcs
   val ctxt = set_suffix fterms ctxt
   val (_, ctxt') = reg_and_proove_time_func ctxt fterms
     (case thms of NONE => get_terms ctxt (hd fterms)
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
-    true
+    true simp
 in ctxt'
 end
 
 (* Convert function into its timing function (called by command) with termination proof provided by user*)
-fun reg_time_function_cmd (funcs, thms) (ctxt: local_theory) =
+fun reg_time_function_cmd ((opts, funcs), thms) (ctxt: local_theory) =
 let
+  val simp = contains opts "no_simp" |> not
   val fterms = map (Syntax.read_term ctxt) funcs
   val ctxt = set_suffix fterms ctxt
   val ctxt' = reg_time_func ctxt fterms
     (case thms of NONE => get_terms ctxt (hd fterms)
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
-    true
+    true simp
     |> snd
 in ctxt'
 end
 
 (* Convert function into its timing function (called by command) *)
-fun reg_time_definition_cmd (funcs, thms) (ctxt: local_theory) =
+fun reg_time_definition_cmd ((opts, funcs), thms) (ctxt: local_theory) =
 let
+  val simp = contains opts "no_simp" |> not
   val fterms = map (Syntax.read_term ctxt) funcs
   val ctxt = set_suffix fterms ctxt
   val (_, ctxt') = reg_and_proove_time_func ctxt fterms
     (case thms of NONE => get_terms ctxt (hd fterms) |> check_definition |> map fix_definition
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
-    true
+    true simp
 in ctxt'
 end
 
-val parser = (Scan.repeat1 Parse.prop) -- (Scan.option (Parse.keyword_improper "equations" -- Parse.thms1 >> snd))
+val parser = (Parse.opt_attribs >> map (fst o Token.name_of_src))
+             -- Scan.repeat1 Parse.prop
+             -- Scan.option (Parse.keyword_improper "equations" -- Parse.thms1 >> snd)
 
 val _ = Outer_Syntax.local_theory @{command_keyword "time_fun"}
   "Defines runtime function of a function"
