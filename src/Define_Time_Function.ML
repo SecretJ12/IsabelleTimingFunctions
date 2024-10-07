@@ -95,13 +95,18 @@ fun print_timing ctxt (oinfo: Function.info) (tinfo: Function.info) =
 
 fun print_lemma ctxt defs (T_terms: term list) =
 let
-  val begin = "lemma [simp,code]:\n"
+  val names =
+    defs
+    |> map snd
+    |> map (fn s => "_" ^ s)
+    |> List.foldr (op ^) ""
+  val begin = "lemma T" ^ names ^ "_simps [simp,code]:\n"
   fun convLine T_term =
     "  \"" ^ Syntax.string_of_term ctxt T_term ^ "\"\n"
   val lines = map convLine T_terms
-  fun convDefs def = " " ^ def
+  fun convDefs def = " " ^ (fst def)
   val proof = "  by (simp_all add:" :: (map convDefs defs) @ [")"]
-  val _ = Pretty.writeln (Pretty.str "Simple function can be defined with the following lemma:")
+  val _ = Pretty.writeln (Pretty.str "Characteristic recursion equations can be derived:")
 in
   (begin :: lines @ proof)
   |> String.concat
@@ -561,11 +566,11 @@ let
   val full = Const (full_name,full_type)
   val rhs = List.foldl (fn (a,t) => t $ a) full r_terms
   val eq = (lhs, rhs) |> HOLogic.mk_eq |> HOLogic.mk_Trueprop
-  val _ = Pretty.writeln (Pretty.block [Pretty.str "Defining alias\n",
+  val _ = Pretty.writeln (Pretty.block [Pretty.str "Defining simplified version:\n",
                                         Syntax.pretty_term ctxt eq])
   val (_, ctxt') = Specification.definition NONE [] [] ((def, []), eq) ctxt
 in
-  (def_name, ctxt')
+  ((def_name, orig_name), ctxt')
 end
 fun define_simp terms simplifyables ctxt =
 let
@@ -669,7 +674,9 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
     (* Show where reduction can happen *)
     fun reportReductions (t,(i::is)) =
     (Pretty.writeln (Pretty.str
-      ("Reduction detected: " ^ (Term.term_name t) ^ " can be reduced at index " ^ (Int.toString i)));
+      ((Term.term_name t |> fun_name_to_time ctxt true)
+        ^ " can be simplified because only the time-function component of parameter "
+        ^ (Int.toString (i + 1)) ^ " is used. "));
         reportReductions (t,is))
       | reportReductions (_,[]) = ()
     val _ = simplifyable
@@ -677,7 +684,7 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       |> map reportReductions
 
     (* Register definitions for simplified function *)
-    val (defs, ctxt) = define_simp term simplifyable ctxt
+    val (reds, ctxt) = define_simp term simplifyable ctxt
 
     fun used (t,i) =
       List.exists
@@ -693,8 +700,8 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
     val T_terms_red = terms
       |> List.mapPartial convert_red
     val _ = if List.null T_terms_red then ()
-      else print_lemma ctxt defs T_terms_red
-  in
+      else print_lemma ctxt reds T_terms_red
+  in              
     (info,ctxt)
   end
 fun proove_termination (term: term list) terms (T_info: Function.info, lthy: local_theory) =
