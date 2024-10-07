@@ -315,4 +315,14 @@ lemma "T_size [a,b,c] = 4"
 lemma "T_size (Suc 4) = 0"
   by simp
 
+fun map2 :: "('a \<Rightarrow> 'b) \<Rightarrow> 'a list \<Rightarrow> 'b list" where
+  "map2 _ [] = []"
+| "map2 f (x#xs) = f x # map2 f xs"
+fun t_map2 where
+  "t_map2 _ [] = 1"
+| "t_map2 (f,T_f) (x#xs) = T_f x + t_map2 (f,T_f) xs + 1"
+time_fun [no_simp] map2
+lemma "T_map2 f xs = t_map2 f xs"
+  by (induction rule: t_map2.induct) auto
+
 end
