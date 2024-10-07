@@ -789,29 +789,33 @@ in
   (case suffix of NONE => I | SOME s => Config.put bsuffix ("_" ^ s)) ctxt
 end
 
+fun check_opts [] = false
+  | check_opts ["no_simp"] = true
+  | check_opts (a::_) = error ("Option " ^ a ^ " is not defined")
+
 (* Convert function into its timing function (called by command) *)
 fun reg_time_fun_cmd ((opts, funcs), thms) (ctxt: local_theory) =
 let
-  val simp = contains opts "no_simp" |> not
+  val no_simp = check_opts opts
   val fterms = map (Syntax.read_term ctxt) funcs
   val ctxt = set_suffix fterms ctxt
   val (_, ctxt') = reg_and_proove_time_func ctxt fterms
     (case thms of NONE => get_terms ctxt (hd fterms)
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
-    true simp
+    true (not no_simp)
 in ctxt'
 end
 
 (* Convert function into its timing function (called by command) with termination proof provided by user*)
 fun reg_time_function_cmd ((opts, funcs), thms) (ctxt: local_theory) =
 let
-  val simp = contains opts "no_simp" |> not
+  val no_simp = check_opts opts
   val fterms = map (Syntax.read_term ctxt) funcs
   val ctxt = set_suffix fterms ctxt
   val ctxt' = reg_time_func ctxt fterms
     (case thms of NONE => get_terms ctxt (hd fterms)
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
-    true simp
+    true (not no_simp)
     |> snd
 in ctxt'
 end
@@ -819,13 +823,13 @@ end
 (* Convert function into its timing function (called by command) *)
 fun reg_time_definition_cmd ((opts, funcs), thms) (ctxt: local_theory) =
 let
-  val simp = contains opts "no_simp" |> not
+  val no_simp = check_opts opts
   val fterms = map (Syntax.read_term ctxt) funcs
   val ctxt = set_suffix fterms ctxt
   val (_, ctxt') = reg_and_proove_time_func ctxt fterms
     (case thms of NONE => get_terms ctxt (hd fterms) |> check_definition |> map fix_definition
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
-    true simp
+    true (not no_simp)
 in ctxt'
 end
 
