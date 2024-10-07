@@ -482,7 +482,8 @@ let
    handle Empty => error "Function or terms of function not found"
 in
   equations
-    |> filter (fn ts => typ_comp (ts |> hd |> get_l |> strip_comb |> fst |> dest_Const |> snd) (term |> dest_Const |> snd))
+    |> filter (List.exists
+        (fn t => typ_comp (t |> get_l |> strip_comb |> fst |> dest_Const |> snd) (term |> dest_Const |> snd)))
     |> hd
 end
 
@@ -800,7 +801,7 @@ let
   val fterms = map (Syntax.read_term ctxt) funcs
   val ctxt = set_suffix fterms ctxt
   val (_, ctxt') = reg_and_proove_time_func ctxt fterms
-    (case thms of NONE => get_terms ctxt (hd fterms)
+    (case thms of NONE => get_terms ctxt (hd fterms) |> @{print}
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
     true (not no_simp)
 in ctxt'
