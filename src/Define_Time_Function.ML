@@ -249,10 +249,10 @@ fun walk ctxt (origin: term list) (conv as {ifc, casec, funcc, letc, ...} : 'a c
 
 (* 1. Fix all terms *)
 (* Exchange Var in types and terms to Free *)
-fun fixTerms (Var(ixn,T)) = Free (fst ixn, T)
-  | fixTerms t = t
-fun fixTypes (TVar ((t, _), T)) = TFree (t, T)
-  | fixTypes t = t
+fun freeTerms (Var(ixn,T)) = Free (fst ixn, T)
+  | freeTerms t = t
+fun freeTypes (TVar ((t, _), T)) = TFree (t, T)
+  | freeTypes t = t
 
 fun noFun (Type ("fun", _)) = error "Functions in datatypes are not allowed in case constructions"
   | noFun T = T
@@ -268,13 +268,22 @@ fun fixCasec wctxt (t as Const (_,T)) args =
       (check_args "cases" (t,args); list_comb (t,fixCasecCases wctxt T args))
   | fixCasec _ _ _ = error "Internal error: invalid case term"
 
-fun fixPartTerms ctxt (term: term list) t =
+fun shortFunc fixedNum (Const (nm,T)) = 
+    Const (nm,T |> strip_type |>> drop fixedNum |> (op --->))
+  | shortFunc _ _ = error "Internal error: Invalid term"
+fun shortApp fixedNum (c, args) =
+  (shortFunc fixedNum c, drop fixedNum args)
+fun shortOriginFunc (term: term list) fixedNum (f as (c as Const (_,_), _))  =
+  if contains' const_comp term c then shortApp fixedNum f else f
+  | shortOriginFunc _ _ t = t
+fun fixTerms ctxt (term: term list) (fixedNum: int) (t as pT $ (eq $ l $ r)) =
   let
     val _ = check_args "args" (strip_comb (get_l t))
-  in
-    map_r (walk ctxt term {
+    val l' = shortApp fixedNum (strip_comb l) |> list_comb
+    val shortOriginFunc' = shortOriginFunc (term |> map (fst o strip_comb)) fixedNum
+    val r' = walk ctxt term {
           funcc = (fn wctxt => fn t => fn args =>
-              (check_args "func" (t,args); list_comb (t, map (#f wctxt) args))),
+              (check_args "func" (t,args); (t, map (#f wctxt) args) |> shortOriginFunc' |> list_comb)),
           constc = (fn _ => fn c => (case c of Abs _ => error "Lambdas not supported" | _ => c)),
           ifc = (fn wctxt => fn T => fn cond => fn tt => fn tf =>
             ((Const (@{const_name "HOL.If"}, T)) $ (#f wctxt) cond $ ((#f wctxt) tt) $ ((#f wctxt) tf))),
@@ -285,8 +294,11 @@ fun fixPartTerms ctxt (term: term list) t =
                 (case (#f wctxt) (t$exp) of t$_ => t | _ => error "Internal error: case could not be fixed (let)")
                 else (#f wctxt) t
               in (Const (@{const_name "HOL.Let"},expT) $ ((#f wctxt) exp) $ build_abs f' abs) end)
-      }) t
+      } r
+  in
+    pT $ (eq $ l' $ r')
   end
+  | fixTerms _ _ _ _ = error "Internal error: invalid term"
 
 (* 2. Check for properties about the function *)
 (* 2.1 Check if function is recursive *)
@@ -321,8 +333,9 @@ fun use_origin (Free (nm, T as Type ("fun",_))) = HOLogic.mk_fst (Free (nm,HOLog
 fun fun_to_time' ctxt orig_used _ (origin: term list) second (func as Const (nm,T)) =
 let
   val used' = used_for_const orig_used func
+  val origin' = map (fst o strip_comb) origin
 in
-  if contains' const_comp origin func then SOME (Free (func |> Term.term_name |> fun_name_to_time' ctxt true second, change_typ' used' T)) else
+  if contains' const_comp origin' func then SOME (Free (func |> Term.term_name |> fun_name_to_time' ctxt true second, change_typ' used' T)) else
   if Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) (nm,T) then NONE else
     time_term ctxt false func
 end
@@ -458,6 +471,7 @@ let
     l_const
     |> used_for_const orig_used
     |> (fn f => fn n => f (index l_params n))
+  val _ = @{print} "Checkpoint 2.1"
 in
       pT
       $ (Const (eqN, @{typ "nat \<Rightarrow> nat \<Rightarrow> bool"})
@@ -483,7 +497,7 @@ let
 in
   equations
     |> filter (List.exists
-        (fn t => typ_comp (t |> get_l |> strip_comb |> fst |> dest_Const |> snd) (term |> dest_Const |> snd)))
+        (fn t => typ_comp (t |> get_l |> strip_comb |> fst |> dest_Const |> snd) (term |> strip_comb |> fst |> dest_Const |> snd)))
     |> hd
 end
 
@@ -589,13 +603,21 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
         of SOME _ => error ("Timing function already declared: " ^ (Term.term_name (hd term)))
          | NONE => ()
 
+    (* Number of terms fixed by locale *)
+    val fixedNum = term
+      |> hd
+      |> strip_comb |> snd
+      |> length
+
     (* 1. Fix all terms *)
     (* Exchange Var in types and terms to Free and check constraints *)
     val terms = map
-      (map_aterms fixTerms
-        #> map_types (map_atyps fixTypes)
-        #> fixPartTerms lthy term)
+      (map_aterms freeTerms
+        #> map_types (map_atyps freeTypes)
+        #> fixTerms lthy term fixedNum)
       terms
+    val term = map (fst o strip_comb) term
+
 
     (* 2. Find properties about the function *)
     (* 2.1 Check if function is recursive *)
@@ -606,7 +628,9 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       - On left side change name of function to timing function
       - Convert right side of equation with conversion schema
     *)
+    val _ = @{print} "pre conversion complete"
     val T_terms = map (convert_term lthy term is_rec (K true)) terms
+    val _ = @{print} "Checkpoint conversion completed"
 
     val simplifyable = if simp
       then find_simplifyble lthy term T_terms
@@ -634,6 +658,7 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
     val bindings = map (fn nm => (Binding.name nm, NONE, NoSyn)) timing_names
     fun pat_completeness_auto ctxt =
       Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
+    val _ = @{print} T_terms
     val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) T_terms
 
     (* Context for printing without showing question marks *)
@@ -725,7 +750,7 @@ fun proove_termination (term: term list) terms (T_info: Function.info, lthy: loc
             | args (a$(Const (_,T))) = args a |> (fn ar => ("uu",T)::ar)
             | args _ = []
           val dom_vars =
-            terms |> hd |> get_l |> map_types (map_atyps fixTypes)
+            terms |> hd |> get_l |> map_types (map_atyps freeTypes)
             |> args |> Variable.variant_frees lthy []
           val dom_args = 
             List.foldl (fn (t,p) => HOLogic.mk_prod ((Free t),p)) (Free (hd dom_vars)) (tl dom_vars)
@@ -801,7 +826,7 @@ let
   val fterms = map (Syntax.read_term ctxt) funcs
   val ctxt = set_suffix fterms ctxt
   val (_, ctxt') = reg_and_proove_time_func ctxt fterms
-    (case thms of NONE => get_terms ctxt (hd fterms) |> @{print}
+    (case thms of NONE => get_terms ctxt (hd fterms)
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
     true (not no_simp)
 in ctxt'
