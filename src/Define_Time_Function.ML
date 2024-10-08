@@ -246,6 +246,13 @@ fun walk ctxt (origin: term list) (conv as {ifc, casec, funcc, letc, ...} : 'a c
   end
   | walk ctxt origin (conv as {constc, ...}) c = 
       constc {ctxt = ctxt, origins = origin, f = walk ctxt origin conv} c
+fun Ifunc (wctxt: term wctxt) t args = list_comb (#f wctxt t,map (#f wctxt) args)
+val Iconst = K I
+fun Iif (wctxt: term wctxt) T cond tt tf =
+  Const (@{const_name "HOL.If"}, T) $ (#f wctxt cond) $ (#f wctxt tt) $ (#f wctxt tf)
+fun Icase (wctxt: term wctxt) t cs = list_comb (#f wctxt t,map (#f wctxt) cs)
+fun Ilet (wctxt: term wctxt) lT exp abs t =
+  Const (@{const_name "HOL.Let"},lT) $ (#f wctxt exp) $ build_abs (#f wctxt t) abs
 
 (* 1. Fix all terms *)
 (* Exchange Var in types and terms to Free *)
@@ -285,8 +292,7 @@ fun fixTerms ctxt (term: term list) (fixedNum: int) (t as pT $ (eq $ l $ r)) =
           funcc = (fn wctxt => fn t => fn args =>
               (check_args "func" (t,args); (t, map (#f wctxt) args) |> shortOriginFunc' |> list_comb)),
           constc = (fn _ => fn c => (case c of Abs _ => error "Lambdas not supported" | _ => c)),
-          ifc = (fn wctxt => fn T => fn cond => fn tt => fn tf =>
-            ((Const (@{const_name "HOL.If"}, T)) $ (#f wctxt) cond $ ((#f wctxt) tt) $ ((#f wctxt) tf))),
+          ifc = Iif,
           casec = fixCasec,
           letc = (fn wctxt => fn expT => fn exp => fn abs => fn t =>
               let
@@ -471,7 +477,6 @@ let
     l_const
     |> used_for_const orig_used
     |> (fn f => fn n => f (index l_params n))
-  val _ = @{print} "Checkpoint 2.1"
 in
       pT
       $ (Const (eqN, @{typ "nat \<Rightarrow> nat \<Rightarrow> bool"})
@@ -479,6 +484,25 @@ in
         $ (to_time ctxt origin is_rec orig_used used r))
 end
   | convert_term _ _ _ _ _ = error "Internal error: invalid term to convert"
+
+(* 3.5 Support for locales *)
+fun replaceFstSndFree ctxt (origin: term list) (rfst: term -> term) (rsnd: term -> term) =
+  (walk ctxt origin {
+          funcc = fn wctxt => fn t => fn args =>
+            case args of
+                 (f as Free _)::args =>
+                   (case t of
+                       Const ("Product_Type.prod.fst", _) =>
+                        list_comb (rfst (t $ f), map (#f wctxt) args)
+                     | Const ("Product_Type.prod.snd", _) =>
+                        list_comb (rsnd (t $ f), map (#f wctxt) args)
+                     | t => list_comb (t, map (#f wctxt) (f :: args)))
+               | args => list_comb (t, map (#f wctxt) args),
+          constc = Iconst,
+          ifc = Iif,
+          casec = Icase,
+          letc = Ilet
+      })
 
 (* 4. Tactic to prove "f_dom n" *)
 fun time_dom_tac ctxt induct_rule domintros =
@@ -616,7 +640,8 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
         #> map_types (map_atyps freeTypes)
         #> fixTerms lthy term fixedNum)
       terms
-    val term = map (fst o strip_comb) term
+    val fixedFrees = (hd term) |> strip_comb |> snd |> take fixedNum |> map (fst o dest_Free)
+    val term = map (shortFunc fixedNum o fst o strip_comb) term
 
 
     (* 2. Find properties about the function *)
@@ -628,9 +653,18 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       - On left side change name of function to timing function
       - Convert right side of equation with conversion schema
     *)
-    val _ = @{print} "pre conversion complete"
+    fun fFst (t as (Const (_,T) $ Free (nm,_))) =
+      (if contains fixedFrees nm
+        then Free (nm,strip_type T |>> tl |> (op --->))
+        else t)
+      | fFst t = t
+    fun fSnd (t as (Const (_,T) $ Free (nm,_))) =
+      (if contains fixedFrees nm
+        then Free (fun_name_to_time lthy false nm,strip_type T |>> tl |> (op --->))
+        else t)
+      | fSnd t = t
     val T_terms = map (convert_term lthy term is_rec (K true)) terms
-    val _ = @{print} "Checkpoint conversion completed"
+      |> map (map_r (replaceFstSndFree lthy term fFst fSnd))
 
     val simplifyable = if simp
       then find_simplifyble lthy term T_terms
@@ -658,7 +692,6 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
     val bindings = map (fn nm => (Binding.name nm, NONE, NoSyn)) timing_names
     fun pat_completeness_auto ctxt =
       Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
-    val _ = @{print} T_terms
     val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) T_terms
 
     (* Context for printing without showing question marks *)
@@ -717,7 +750,9 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       |> not
     fun convert_red t =
       if t |> get_l |> strip_comb |> fst |> SOME |> contains renaming
-      then SOME (convert_term lthy term is_rec used t)
+      then SOME (convert_term lthy term is_rec used t
+                  |> map_r (replaceFstSndFree lthy term fFst fSnd)
+          )
       else NONE
 
     (* Calculate reduced terms *)
