@@ -530,7 +530,7 @@ in
     |> hd
 end
 
-(* 5. Check for higher-order function if original function is used *)
+(* 5. Check for higher-order function if original function is used \<rightarrow> find simplifications *)
 fun find_used' T_t =
 let
   val (T_ident, T_args) = strip_comb (get_l T_t)
@@ -584,9 +584,9 @@ let
   val def_name = red_name ^ "_def"
   val def = Binding.name def_name
 
-  val card = Syntax.read_term (Local_Theory.exit ctxt) name |> strip_comb
-  val cardFrees = card |> snd
-  val cardType = card |> fst |> dest_Const_type |> strip_type |> fst |> take (length cardFrees)
+  val canon = Syntax.read_term (Local_Theory.exit ctxt) name |> strip_comb
+  val canonFrees = canon |> snd
+  val canonType = canon |> fst |> dest_Const_type |> strip_type |> fst |> take (length canonFrees)
 
   val types = term |> dest_Const_type |> strip_type |> fst
   val vars = Variable.variant_fixes (map (K "") types) ctxt |> fst
@@ -612,7 +612,7 @@ let
     | r_terms' _ _ _ = []
   val r_terms = r_terms' 0 vars types
   val full_type = (r_terms |> map (type_of) ---> HOLogic.natT)
-  val full = list_comb (Const (full_name,cardType ---> full_type), cardFrees)
+  val full = list_comb (Const (full_name,canonType ---> full_type), canonFrees)
   val rhs = list_comb (full, r_terms)
   val eq = (lhs, rhs) |> HOLogic.mk_eq |> HOLogic.mk_Trueprop
   val _ = Pretty.writeln (Pretty.block [Pretty.str "Defining simplified version:\n",
@@ -623,13 +623,71 @@ let
 in
   ((def_name, orig_name), ctxt')
 end
-fun define_simp terms simplifyables ctxt =
+fun define_simp simpables ctxt =
 let
   fun cond ((term,simplifyable),(defs,ctxt)) =
-    (if null simplifyable then (defs,ctxt)
-      else define_simp' term simplifyable ctxt |>> (fn def => def :: defs))
+    define_simp' term simplifyable ctxt |>> (fn def => def :: defs)
 in
-  List.foldr cond ([], ctxt) (ListPair.zip (terms, simplifyables))
+  List.foldr cond ([], ctxt) simpables
+end
+
+
+fun replace from to =
+  map (map_aterms (fn t => if t = from then to else t))
+fun replaceAll [] = I
+  | replaceAll ((from,to)::xs) = replaceAll xs o replace from to
+fun calculateSimplifications ctxt T_terms term simpables =
+let
+  (* Show where a simplification can take place *)
+    fun reportReductions (t,(i::is)) =
+    (Pretty.writeln (Pretty.str
+      ((Term.term_name t |> fun_name_to_time ctxt true)
+        ^ " can be simplified because only the time-function component of parameter "
+        ^ (Int.toString (i + 1)) ^ " is used. "));
+        reportReductions (t,is))
+      | reportReductions (_,[]) = ()
+    val _ = simpables
+      |> map reportReductions
+
+    (* Register definitions for simplified function *)
+    val (reds, ctxt) = define_simp simpables ctxt
+
+    fun genRetype (Const (nm,T),is) =
+    let
+      val T_name = fun_name_to_time ctxt true nm |> split_name |> List.last
+      val from = Free (T_name,change_typ T)
+      val to = Free (T_name,change_typ' (not o contains is) T)
+    in
+      (from,to)
+    end
+      | genRetype _ = error "Internal error: invalid term"
+    val retyping = map genRetype simpables
+
+    fun replaceArgs (pT $ (eq $ l $ r)) =
+    let
+      (*
+        Find the correct used pair
+        \<rightarrow> iterate over params
+        \<rightarrow> for every params: if not in used list: replace here and all on right side
+        \<rightarrow> be happy
+        \<rightarrow> throw out old big stupid code
+      *)
+    in
+      (pT $ (eq $ l $ r))
+    end
+
+    fun simpFst (t as (Const (_,T) $ Free (nm,_))) = ()
+
+    (* Calculate reduced terms *)
+    val T_terms_red = T_terms
+      |> replaceAll retyping
+      |> map replaceArgs
+
+    val _ = print_lemma ctxt reds T_terms_red
+    val _ = 
+        Pretty.writeln (Pretty.str "If you do not want the simplified T function, use \"time_fun [no_simp]\"")
+in
+  ctxt
 end
 
 (* Register timing function of a given function *)
@@ -681,33 +739,31 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
     val T_terms = map (convert_term lthy term is_rec (K true)) terms
       |> map (map_r (replaceFstSndFree lthy term fFst fSnd))
 
-    val simplifyable = if simp
+    val simpables = (if simp
       then find_simplifyble lthy term T_terms
-      else map (K []) term
-    fun detectRename (t,_::_) = SOME t
-      | detectRename (_,[]) = NONE
-    val renaming =
-      simplifyable
+      else map (K []) term)
       |> (fn s => ListPair.zip (term,s))
-      |> map detectRename
+    (* Determine if something is simpable, if so rename everything *)
+    val simpable = simpables |> map snd |> exists (not o null)
     (* Rename to secondary if simpable *)
-    fun rename (SOME t,T_terms) =
+    fun genRename (t,_) =
       let
         val old = fun_to_time lthy (K true) (K true) term t |> Option.valOf
         val new = fun_to_time' lthy (K true) (K true) term true t |> Option.valOf
       in
-        map (map_aterms (fn t => if t = old then new else t)) T_terms
+        (old,new)
       end
-      | rename (_,T_terms) = T_terms
-    val T_terms = List.foldr rename T_terms renaming
+    val can_T_terms = if simpable 
+      then replaceAll (map genRename simpables) T_terms
+      else T_terms
 
     (* 4. Register function and prove completeness *)
     val names = map Term.term_name term
-    val timing_names = map (fn (r,nm) => fun_name_to_time' lthy true (Option.isSome r) nm) (ListPair.zip (renaming,names))
+    val timing_names = map (fun_name_to_time' lthy true simpable) names
     val bindings = map (fn nm => (Binding.name nm, NONE, NoSyn)) timing_names
     fun pat_completeness_auto ctxt =
       Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
-    val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) T_terms
+    val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) can_T_terms
 
     (* Context for printing without showing question marks *)
     val print_ctxt = lthy
@@ -721,7 +777,7 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
           val typs = map (dest_Const_type) term
         in
           print_timing' print_ctxt { names=nms, terms=terms, typs=typs }
-            { names=timing_names, terms=T_terms, typs=map change_typ typs }
+            { names=timing_names, terms=can_T_terms, typs=map change_typ typs }
         end
     
     (* For partial functions sequential=true is needed in order to support them
@@ -743,41 +799,7 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
              | Match =>
           register true
 
-    (* Show where reduction can happen *)
-    fun reportReductions (t,(i::is)) =
-    (Pretty.writeln (Pretty.str
-      ((Term.term_name t |> fun_name_to_time ctxt true)
-        ^ " can be simplified because only the time-function component of parameter "
-        ^ (Int.toString (i + 1)) ^ " is used. "));
-        reportReductions (t,is))
-      | reportReductions (_,[]) = ()
-    val _ = simplifyable
-      |> (fn s => ListPair.zip (term,s))
-      |> map reportReductions
-
-    (* Register definitions for simplified function *)
-    val (reds, ctxt) = define_simp term simplifyable ctxt
-
-    fun used (t,i) =
-      List.exists
-      (fn (t',i') => if t = t' then contains i' i else false)
-      (ListPair.zip (term,simplifyable))
-      |> not
-    fun convert_red t =
-      if t |> get_l |> strip_comb |> fst |> SOME |> contains renaming
-      then SOME (convert_term lthy term is_rec used t
-                  |> map_r (replaceFstSndFree lthy term fFst fSnd)
-          )
-      else NONE
-
-    (* Calculate reduced terms *)
-    val T_terms_red = terms
-      |> List.mapPartial convert_red
-    val _ = if List.null T_terms_red then ()
-      else (
-        print_lemma ctxt reds T_terms_red;
-        Pretty.writeln (Pretty.str "If you do not want the simplified T function, use \"time_fun [no_simp]\"")
-      )
+    val ctxt = if simpable then calculateSimplifications ctxt T_terms term simpables else ctxt
   in
     (info,ctxt)
   end
