@@ -14,6 +14,11 @@ type 'a converter = {
   letc : 'a wctxt -> typ -> term -> (string * typ) list -> term -> 'a
 }
 val walk : local_theory -> term list -> 'a converter -> term -> 'a
+val Iconst : term wctxt -> term -> term
+val Ifunc : term wctxt -> term -> term list -> term
+val Iif : term wctxt -> typ -> term -> term -> term -> term
+val Icase : term wctxt -> term -> term list -> term
+val Ilet : term wctxt -> typ -> term -> (string * typ) list -> term -> term
 
 type pfunc = { names : string list, terms : term list, typs : typ list }
 val fun_pretty':  Proof.context -> pfunc -> Pretty.T
@@ -568,13 +573,20 @@ end
 
 fun define_simp' term simplifyable ctxt =
 let
-  val thy_name = ctxt |> Proof_Context.theory_of |> Context.theory_name {long=false}
-
+  val base_name = case Named_Target.locale_of ctxt of
+          NONE => ctxt |> Proof_Context.theory_of |> Context.theory_base_name
+        | SOME nm => nm
+  
   val orig_name = term |> dest_Const_name |> split_name |> List.last
   val red_name = fun_name_to_time ctxt false orig_name
-  val full_name = thy_name ^ "." ^ fun_name_to_time' ctxt true true orig_name
+  val name = fun_name_to_time' ctxt true true orig_name
+  val full_name = base_name ^ "." ^ name
   val def_name = red_name ^ "_def"
   val def = Binding.name def_name
+
+  val card = Syntax.read_term (Local_Theory.exit ctxt) name |> strip_comb
+  val cardFrees = card |> snd
+  val cardType = card |> fst |> dest_Const_type |> strip_type |> fst |> take (length cardFrees)
 
   val types = term |> dest_Const_type |> strip_type |> fst
   val vars = Variable.variant_fixes (map (K "") types) ctxt |> fst
@@ -599,13 +611,15 @@ let
     | r_terms' i (v::vars) (T::types) = Free (v,T) :: r_terms' (i+1) vars types
     | r_terms' _ _ _ = []
   val r_terms = r_terms' 0 vars types
-  val full_type = r_terms |> map type_of ---> HOLogic.natT
-  val full = Const (full_name,full_type)
-  val rhs = List.foldl (fn (a,t) => t $ a) full r_terms
+  val full_type = (r_terms |> map (type_of) ---> HOLogic.natT)
+  val full = list_comb (Const (full_name,cardType ---> full_type), cardFrees)
+  val rhs = list_comb (full, r_terms)
   val eq = (lhs, rhs) |> HOLogic.mk_eq |> HOLogic.mk_Trueprop
   val _ = Pretty.writeln (Pretty.block [Pretty.str "Defining simplified version:\n",
                                         Syntax.pretty_term ctxt eq])
+
   val (_, ctxt') = Specification.definition NONE [] [] ((def, []), eq) ctxt
+
 in
   ((def_name, orig_name), ctxt')
 end
@@ -640,7 +654,8 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
         #> map_types (map_atyps freeTypes)
         #> fixTerms lthy term fixedNum)
       terms
-    val fixedFrees = (hd term) |> strip_comb |> snd |> take fixedNum |> map (fst o dest_Free)
+    val fixedFrees = (hd term) |> strip_comb |> snd |> take fixedNum 
+    val fixedFreesNames = map (fst o dest_Free) fixedFrees
     val term = map (shortFunc fixedNum o fst o strip_comb) term
 
 
@@ -654,12 +669,12 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       - Convert right side of equation with conversion schema
     *)
     fun fFst (t as (Const (_,T) $ Free (nm,_))) =
-      (if contains fixedFrees nm
+      (if contains fixedFreesNames nm
         then Free (nm,strip_type T |>> tl |> (op --->))
         else t)
       | fFst t = t
     fun fSnd (t as (Const (_,T) $ Free (nm,_))) =
-      (if contains fixedFrees nm
+      (if contains fixedFreesNames nm
         then Free (fun_name_to_time lthy false nm,strip_type T |>> tl |> (op --->))
         else t)
       | fSnd t = t
@@ -897,7 +912,7 @@ end
 val parser = (Parse.opt_attribs >> map (fst o Token.name_of_src))
              -- Scan.repeat1 Parse.prop
              -- Scan.option (Parse.keyword_improper "equations" -- Parse.thms1 >> snd)
-
+val _ = Toplevel.local_theory
 val _ = Outer_Syntax.local_theory @{command_keyword "time_fun"}
   "Defines runtime function of a function"
   (parser >> reg_time_fun_cmd)
