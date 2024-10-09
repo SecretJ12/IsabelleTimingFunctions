@@ -325,4 +325,60 @@ time_fun [no_simp] map2
 lemma "T_map2 f xs = t_map2 f xs"
   by (induction rule: t_map2.induct) auto
 
+locale locTests =
+  fixes f :: "'a \<Rightarrow> 'b"
+   and  T_f :: "'a \<Rightarrow> nat"
+begin
+
+fun simple where
+  "simple a = f a"
+time_fun simple
+
+fun even :: "'a list \<Rightarrow> 'b list" and odd :: "'a list \<Rightarrow> 'b list" where
+  "even [] = []"
+| "odd [] = []"
+| "even (x#xs) = f x # odd xs"
+| "odd (x#xs) = even xs"
+time_fun even odd
+
+fun locSum :: "nat list \<Rightarrow> nat" where
+  "locSum [] = 0"
+| "locSum (x#xs) = x + locSum xs"
+time_fun locSum
+
+fun map :: "'a list \<Rightarrow> 'b list" where
+  "map [] = []"
+| "map (x#xs) = f x # map xs"
+
+fun t_map :: "'a list \<Rightarrow> nat" where
+  "t_map [] = 1"
+| "t_map (x#xs) = T_f x + t_map xs + 1"
+
+time_fun map
+lemma "t_map xs = T_map xs"
+  by (induction xs) auto
+
+fun map2 :: "('b \<Rightarrow> 'c) \<Rightarrow> 'a list \<Rightarrow> 'c list" where
+  "map2 _ [] = []"
+| "map2 g (x#xs) = g (f x) # map2 g xs"
+
+fun t2_map2 :: "('b \<Rightarrow> 'c) * ('b \<Rightarrow> nat) \<Rightarrow> 'a list \<Rightarrow> nat" where
+  "t2_map2 _ [] = 1"
+| "t2_map2 g (x#xs) = T_f x + snd g (f x) + t2_map2 g xs + 1"
+fun t_map2 :: "('b \<Rightarrow> nat) \<Rightarrow> 'a list \<Rightarrow> nat" where
+  "t_map2 _ [] = 1"
+| "t_map2 T_g (x#xs) = T_f x + T_g (f x) + t_map2 T_g xs + 1"
+time_fun map2
+lemma "t2_map2 g xs = T2_map2 g xs"
+  by (induction xs) auto
+
+lemma T_map2_simps [simp,code]:
+  "T_map2 T_uu [] = 1"
+  "T_map2 T_g (x # xs) = T_f x + T_g (f x) + T_map2 T_g xs + 1"
+  by (simp_all add: T_map2_def)
+lemma "t_map2 g xs = T_map2 g xs"
+  by (induction xs) auto
+
+end
+
 end
