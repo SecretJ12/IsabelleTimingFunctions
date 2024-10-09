@@ -113,7 +113,7 @@ let
 in
   (begin :: lines @ proof)
   |> String.concat
-  (* |> Active.sendback_markup_properties [Markup.padding_fun] *)
+  |> Active.sendback_markup_properties [Markup.padding_fun]
   |> Pretty.str
   |> Pretty.writeln
 end
@@ -665,18 +665,41 @@ let
 
     fun replaceArgs (pT $ (eq $ l $ r)) =
     let
-      (*
-        Find the correct used pair
-        \<rightarrow> iterate over params
-        \<rightarrow> for every params: if not in used list: replace here and all on right side
-        \<rightarrow> be happy
-        \<rightarrow> throw out old big stupid code
-      *)
-    in
-      (pT $ (eq $ l $ r))
-    end
+      val (t,params) = strip_comb l
+      fun match (Const (f_nm,_),_) = 
+            (fun_name_to_time ctxt true f_nm |> Long_Name.base_name) = (dest_Free t |> fst)
+        | match _ = false
+      val simps = List.find match simpables |> Option.valOf |> snd
 
-    fun simpFst (t as (Const (_,T) $ Free (nm,_))) = ()
+      fun dest_Prod_snd (Free (nm, Type (_, [_, T2]))) =
+            Free (fun_name_to_time ctxt false nm, T2)
+        | dest_Prod_snd _ = error "Internal error: Argument is not a pair"
+      fun rep _ [] = ([],[])
+        | rep i (x::xs) =
+      let 
+        val (rs,args) = rep (i+1) xs
+      in
+        if contains simps i
+          then (x::rs,dest_Prod_snd x::args)
+          else (rs,x::args)
+      end
+      val (rs,params) = rep 0 params
+      fun fFst _ = error "Internal error: Invalid term to simplify"
+      fun fSnd (t as (Const _ $ f)) =
+        (if contains rs f
+          then dest_Prod_snd f
+          else t)
+        | fSnd t = t
+    in
+      (pT $ (eq
+          $ (list_comb (t,params))
+          $ (replaceFstSndFree ctxt term fFst fSnd r
+              |> (fn t => replaceAll (map (fn t => (t,dest_Prod_snd t)) rs) [t])
+              |> hd
+            )
+      ))
+    end
+    | replaceArgs _ = error "Internal error: Invalid term"
 
     (* Calculate reduced terms *)
     val T_terms_red = T_terms
