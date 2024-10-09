@@ -14,6 +14,11 @@ type 'a converter = {
   letc : 'a wctxt -> typ -> term -> (string * typ) list -> term -> 'a
 }
 val walk : local_theory -> term list -> 'a converter -> term -> 'a
+val Iconst : term wctxt -> term -> term
+val Ifunc : term wctxt -> term -> term list -> term
+val Iif : term wctxt -> typ -> term -> term -> term -> term
+val Icase : term wctxt -> term -> term list -> term
+val Ilet : term wctxt -> typ -> term -> (string * typ) list -> term -> term
 
 type pfunc = { names : string list, terms : term list, typs : typ list }
 val fun_pretty':  Proof.context -> pfunc -> Pretty.T
@@ -115,9 +120,6 @@ end
 
 fun contains l e = exists (fn e' => e' = e) l
 fun contains' comp l e = exists (comp e) l
-fun index [] _ = 0
-  | index (x::xs) el = (if x = el then 0 else 1 + index xs el)
-fun used_for_const orig_used t i = orig_used (t,i)
 (* Split name by . *)
 val split_name = String.fields (fn s => s = #".")
 
@@ -246,13 +248,20 @@ fun walk ctxt (origin: term list) (conv as {ifc, casec, funcc, letc, ...} : 'a c
   end
   | walk ctxt origin (conv as {constc, ...}) c = 
       constc {ctxt = ctxt, origins = origin, f = walk ctxt origin conv} c
+fun Ifunc (wctxt: term wctxt) t args = list_comb (#f wctxt t,map (#f wctxt) args)
+val Iconst = K I
+fun Iif (wctxt: term wctxt) T cond tt tf =
+  Const (@{const_name "HOL.If"}, T) $ (#f wctxt cond) $ (#f wctxt tt) $ (#f wctxt tf)
+fun Icase (wctxt: term wctxt) t cs = list_comb (#f wctxt t,map (#f wctxt) cs)
+fun Ilet (wctxt: term wctxt) lT exp abs t =
+  Const (@{const_name "HOL.Let"},lT) $ (#f wctxt exp) $ build_abs (#f wctxt t) abs
 
 (* 1. Fix all terms *)
 (* Exchange Var in types and terms to Free *)
-fun fixTerms (Var(ixn,T)) = Free (fst ixn, T)
-  | fixTerms t = t
-fun fixTypes (TVar ((t, _), T)) = TFree (t, T)
-  | fixTypes t = t
+fun freeTerms (Var(ixn,T)) = Free (fst ixn, T)
+  | freeTerms t = t
+fun freeTypes (TVar ((t, _), T)) = TFree (t, T)
+  | freeTypes t = t
 
 fun noFun (Type ("fun", _)) = error "Functions in datatypes are not allowed in case constructions"
   | noFun T = T
@@ -268,16 +277,24 @@ fun fixCasec wctxt (t as Const (_,T)) args =
       (check_args "cases" (t,args); list_comb (t,fixCasecCases wctxt T args))
   | fixCasec _ _ _ = error "Internal error: invalid case term"
 
-fun fixPartTerms ctxt (term: term list) t =
+fun shortFunc fixedNum (Const (nm,T)) = 
+    Const (nm,T |> strip_type |>> drop fixedNum |> (op --->))
+  | shortFunc _ _ = error "Internal error: Invalid term"
+fun shortApp fixedNum (c, args) =
+  (shortFunc fixedNum c, drop fixedNum args)
+fun shortOriginFunc (term: term list) fixedNum (f as (c as Const (_,_), _))  =
+  if contains' const_comp term c then shortApp fixedNum f else f
+  | shortOriginFunc _ _ t = t
+fun fixTerms ctxt (term: term list) (fixedNum: int) (t as pT $ (eq $ l $ r)) =
   let
     val _ = check_args "args" (strip_comb (get_l t))
-  in
-    map_r (walk ctxt term {
+    val l' = shortApp fixedNum (strip_comb l) |> list_comb
+    val shortOriginFunc' = shortOriginFunc (term |> map (fst o strip_comb)) fixedNum
+    val r' = walk ctxt term {
           funcc = (fn wctxt => fn t => fn args =>
-              (check_args "func" (t,args); list_comb (t, map (#f wctxt) args))),
+              (check_args "func" (t,args); (t, map (#f wctxt) args) |> shortOriginFunc' |> list_comb)),
           constc = (fn _ => fn c => (case c of Abs _ => error "Lambdas not supported" | _ => c)),
-          ifc = (fn wctxt => fn T => fn cond => fn tt => fn tf =>
-            ((Const (@{const_name "HOL.If"}, T)) $ (#f wctxt) cond $ ((#f wctxt) tt) $ ((#f wctxt) tf))),
+          ifc = Iif,
           casec = fixCasec,
           letc = (fn wctxt => fn expT => fn exp => fn abs => fn t =>
               let
@@ -285,8 +302,11 @@ fun fixPartTerms ctxt (term: term list) t =
                 (case (#f wctxt) (t$exp) of t$_ => t | _ => error "Internal error: case could not be fixed (let)")
                 else (#f wctxt) t
               in (Const (@{const_name "HOL.Let"},expT) $ ((#f wctxt) exp) $ build_abs f' abs) end)
-      }) t
+      } r
+  in
+    pT $ (eq $ l' $ r')
   end
+  | fixTerms _ _ _ _ = error "Internal error: invalid term"
 
 (* 2. Check for properties about the function *)
 (* 2.1 Check if function is recursive *)
@@ -318,54 +338,48 @@ fun use_origin (Free (nm, T as Type ("fun",_))) = HOLogic.mk_fst (Free (nm,HOLog
   | use_origin t = t
 
 (* Conversion of function term *)
-fun fun_to_time' ctxt orig_used _ (origin: term list) second (func as Const (nm,T)) =
+fun fun_to_time' ctxt (origin: term list) second (func as Const (nm,T)) =
 let
-  val used' = used_for_const orig_used func
+  val origin' = map (fst o strip_comb) origin
 in
-  if contains' const_comp origin func then SOME (Free (func |> Term.term_name |> fun_name_to_time' ctxt true second, change_typ' used' T)) else
+  if contains' const_comp origin' func then SOME (Free (func |> Term.term_name |> fun_name_to_time' ctxt true second, change_typ T)) else
   if Zero_Funcs.is_zero (Proof_Context.theory_of ctxt) (nm,T) then NONE else
     time_term ctxt false func
 end
-  | fun_to_time' ctxt _ used _ second (f as Free (nm,T)) = SOME (
-      if used f then HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
-      else Free (fun_name_to_time' ctxt false second nm, change_typ T)
-      )
-  | fun_to_time' _ _ _ _ _ _ = error "Internal error: invalid function to convert"
-fun fun_to_time context orig_used used origin func = fun_to_time' context orig_used used origin false func
+  | fun_to_time' _ _ _ (Free (nm,T)) =
+      SOME (HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T))))
+  | fun_to_time' _ _ _ _ = error "Internal error: invalid function to convert"
+fun fun_to_time context origin func = fun_to_time' context origin false func
 
 (* Convert arguments of left side of a term *)
-fun conv_arg ctxt used _ (f as Free (nm,T as Type("fun",_))) =
-    if used f then Free (nm, HOLogic.mk_prodT (T, change_typ' (K false) T))
-    else Free (fun_name_to_time ctxt false nm, change_typ' (K false) T)
-  | conv_arg _ _ _ x = x
-fun conv_args ctxt used origin = map (conv_arg ctxt used origin)
+fun conv_arg _ (Free (nm,T as Type("fun",_))) =
+    Free (nm, HOLogic.mk_prodT (T, change_typ' (K false) T))
+  | conv_arg _ x = x
+fun conv_args ctxt = map (conv_arg ctxt)
 
 (* Handle function calls *)
 fun build_zero (Type ("fun", [T, R])) = Abs ("uu", T, build_zero R)
   | build_zero _ = zero
-fun funcc_use_origin used (f as Free (nm, T as Type ("fun",_))) =
-    if used f then HOLogic.mk_fst (Free (nm,HOLogic.mk_prodT (T, change_typ T)))
-    else error "Internal error: Error in used detection"
-  | funcc_use_origin _ t = t
-fun funcc_conv_arg _ used _ (t as (_ $ _)) = map_aterms (funcc_use_origin used) t
-  | funcc_conv_arg wctxt used u (f as Free (nm, T as Type ("fun",_))) =
-      if used f then
-        if u then Free (nm, HOLogic.mk_prodT (T, change_typ T))
-        else HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
-      else Free (fun_name_to_time (#ctxt wctxt) false nm, change_typ T)
-  | funcc_conv_arg wctxt _ true (f as Const (_,T as Type ("fun",_))) =
+fun funcc_use_origin (Free (nm, T as Type ("fun",_))) =
+    HOLogic.mk_fst (Free (nm,HOLogic.mk_prodT (T, change_typ T)))
+  | funcc_use_origin t = t
+fun funcc_conv_arg _ _ (t as (_ $ _)) = map_aterms funcc_use_origin t
+  | funcc_conv_arg _ u (Free (nm, T as Type ("fun",_))) =
+      if u then Free (nm, HOLogic.mk_prodT (T, change_typ T))
+      else HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
+  | funcc_conv_arg wctxt true (f as Const (_,T as Type ("fun",_))) =
   (Const (@{const_name "Product_Type.Pair"},
       Type ("fun", [T,Type ("fun", [change_typ T, HOLogic.mk_prodT (T,change_typ T)])]))
-    $ f $ (Option.getOpt (fun_to_time (#ctxt wctxt) (K false) (K false) (#origins wctxt) f, build_zero T)))
-  | funcc_conv_arg wctxt _ false (f as Const (_,T as Type ("fun",_))) =
-      Option.getOpt (fun_to_time (#ctxt wctxt) (K false) (K false) (#origins wctxt) f, build_zero T)
-  | funcc_conv_arg _ _ _ t = t
+    $ f $ (Option.getOpt (fun_to_time (#ctxt wctxt) (#origins wctxt) f, build_zero T)))
+  | funcc_conv_arg wctxt false (f as Const (_,T as Type ("fun",_))) =
+      Option.getOpt (fun_to_time (#ctxt wctxt) (#origins wctxt) f, build_zero T)
+  | funcc_conv_arg _ _ t = t
 
-fun funcc_conv_args _ _ _ [] = []
-  | funcc_conv_args wctxt used (Type ("fun", [t, ts])) (a::args) =
-      funcc_conv_arg wctxt used (is_Used t) a :: funcc_conv_args wctxt used ts args
-  | funcc_conv_args _ _ _ _ = error "Internal error: Non matching type"
-fun funcc orig_used used wctxt func args =
+fun funcc_conv_args _ _ [] = []
+  | funcc_conv_args wctxt (Type ("fun", [t, ts])) (a::args) =
+      funcc_conv_arg wctxt (is_Used t) a :: funcc_conv_args wctxt ts args
+  | funcc_conv_args _ _ _ = error "Internal error: Non matching type"
+fun funcc wctxt func args =
 let
   fun get_T (Free (_,T)) = T
     | get_T (Const (_,T)) = T
@@ -373,8 +387,8 @@ let
     | get_T _ = error "Internal error: Forgotten type"
 in
   List.foldr (I #-> plus)
-  (case fun_to_time (#ctxt wctxt) orig_used used (#origins wctxt) func
-    of SOME t => SOME (list_comb (t,funcc_conv_args wctxt used (get_T t) args))
+  (case fun_to_time (#ctxt wctxt) (#origins wctxt) func
+    of SOME t => SOME (list_comb (t,funcc_conv_args wctxt (get_T t) args))
     | NONE => NONE)
   (map (#f wctxt) args)
 end
@@ -435,11 +449,11 @@ fun letc wctxt expT exp abs t =
     | NONE => NONE))
 
 (* The converter for timing functions given to the walker *)
-fun converter orig_used used : term option converter = {
+val converter : term option converter = {
         constc = fn _ => fn t =>
           (case t of Const ("HOL.undefined", _) => SOME (Const ("HOL.undefined", @{typ "nat"}))
                    | _ => NONE),
-        funcc = (funcc orig_used used),
+        funcc = funcc,
         ifc = ifc,
         casec = casec,
         letc = letc
@@ -447,24 +461,39 @@ fun converter orig_used used : term option converter = {
 fun top_converter is_rec _ _ = opt_term o (fn exp => plus exp (if is_rec then SOME one else NONE))
 
 (* Use converter to convert right side of a term *)
-fun to_time ctxt origin is_rec orig_used used term =
-  top_converter is_rec ctxt origin (walk ctxt origin (converter orig_used used) term)
+fun to_time ctxt origin is_rec term =
+  top_converter is_rec ctxt origin (walk ctxt origin converter term)
 
 (* Converts a term to its running time version *)
-fun convert_term ctxt (origin: term list) is_rec orig_used (pT $ (Const (eqN, _) $ l $ r)) =
+fun convert_term ctxt (origin: term list) is_rec (pT $ (Const (eqN, _) $ l $ r)) =
 let
-  val (l' as (l_const, l_params)) = strip_comb l
-  val used =
-    l_const
-    |> used_for_const orig_used
-    |> (fn f => fn n => f (index l_params n))
+  val (l_const, l_params) = strip_comb l
 in
-      pT
-      $ (Const (eqN, @{typ "nat \<Rightarrow> nat \<Rightarrow> bool"})
-        $ (list_comb (l' |>> (fun_to_time ctxt orig_used used origin) |>> Option.valOf ||> conv_args ctxt used origin))
-        $ (to_time ctxt origin is_rec orig_used used r))
+    pT
+    $ (Const (eqN, @{typ "nat \<Rightarrow> nat \<Rightarrow> bool"})
+      $ (list_comb (l_const |> fun_to_time ctxt origin |> Option.valOf, l_params |> conv_args ctxt))
+      $ (to_time ctxt origin is_rec r))
 end
-  | convert_term _ _ _ _ _ = error "Internal error: invalid term to convert"
+  | convert_term _ _ _ _ = error "Internal error: invalid term to convert"
+
+(* 3.5 Support for locales *)
+fun replaceFstSndFree ctxt (origin: term list) (rfst: term -> term) (rsnd: term -> term) =
+  (walk ctxt origin {
+          funcc = fn wctxt => fn t => fn args =>
+            case args of
+                 (f as Free _)::args =>
+                   (case t of
+                       Const ("Product_Type.prod.fst", _) =>
+                        list_comb (rfst (t $ f), map (#f wctxt) args)
+                     | Const ("Product_Type.prod.snd", _) =>
+                        list_comb (rsnd (t $ f), map (#f wctxt) args)
+                     | t => list_comb (t, map (#f wctxt) (f :: args)))
+               | args => list_comb (t, map (#f wctxt) args),
+          constc = Iconst,
+          ifc = Iif,
+          casec = Icase,
+          letc = Ilet
+      })
 
 (* 4. Tactic to prove "f_dom n" *)
 fun time_dom_tac ctxt induct_rule domintros =
@@ -483,11 +512,11 @@ let
 in
   equations
     |> filter (List.exists
-        (fn t => typ_comp (t |> get_l |> strip_comb |> fst |> dest_Const |> snd) (term |> dest_Const |> snd)))
+        (fn t => typ_comp (t |> get_l |> strip_comb |> fst |> dest_Const |> snd) (term |> strip_comb |> fst |> dest_Const |> snd)))
     |> hd
 end
 
-(* 5. Check for higher-order function if original function is used *)
+(* 5. Check for higher-order function if original function is used \<rightarrow> find simplifications *)
 fun find_used' T_t =
 let
   val (T_ident, T_args) = strip_comb (get_l T_t)
@@ -519,7 +548,7 @@ let
     |> List.map find_used'
     |> List.foldr (op @) []
   val change =
-    Option.valOf o fun_to_time ctxt (K true) (K true) term
+    Option.valOf o fun_to_time ctxt term
   fun detect t i (Type ("fun",_)::args) = 
     (if contains used (change t,i) then [] else [i]) @ detect t (i+1) args
     | detect t i (_::args) = detect t (i+1) args
@@ -530,13 +559,20 @@ end
 
 fun define_simp' term simplifyable ctxt =
 let
-  val thy_name = ctxt |> Proof_Context.theory_of |> Context.theory_name {long=false}
-
+  val base_name = case Named_Target.locale_of ctxt of
+          NONE => ctxt |> Proof_Context.theory_of |> Context.theory_base_name
+        | SOME nm => nm
+  
   val orig_name = term |> dest_Const_name |> split_name |> List.last
   val red_name = fun_name_to_time ctxt false orig_name
-  val full_name = thy_name ^ "." ^ fun_name_to_time' ctxt true true orig_name
+  val name = fun_name_to_time' ctxt true true orig_name
+  val full_name = base_name ^ "." ^ name
   val def_name = red_name ^ "_def"
   val def = Binding.name def_name
+
+  val canon = Syntax.read_term (Local_Theory.exit ctxt) name |> strip_comb
+  val canonFrees = canon |> snd
+  val canonType = canon |> fst |> dest_Const_type |> strip_type |> fst |> take (length canonFrees)
 
   val types = term |> dest_Const_type |> strip_type |> fst
   val vars = Variable.variant_fixes (map (K "") types) ctxt |> fst
@@ -561,23 +597,106 @@ let
     | r_terms' i (v::vars) (T::types) = Free (v,T) :: r_terms' (i+1) vars types
     | r_terms' _ _ _ = []
   val r_terms = r_terms' 0 vars types
-  val full_type = r_terms |> map type_of ---> HOLogic.natT
-  val full = Const (full_name,full_type)
-  val rhs = List.foldl (fn (a,t) => t $ a) full r_terms
+  val full_type = (r_terms |> map (type_of) ---> HOLogic.natT)
+  val full = list_comb (Const (full_name,canonType ---> full_type), canonFrees)
+  val rhs = list_comb (full, r_terms)
   val eq = (lhs, rhs) |> HOLogic.mk_eq |> HOLogic.mk_Trueprop
   val _ = Pretty.writeln (Pretty.block [Pretty.str "Defining simplified version:\n",
                                         Syntax.pretty_term ctxt eq])
+
   val (_, ctxt') = Specification.definition NONE [] [] ((def, []), eq) ctxt
+
 in
   ((def_name, orig_name), ctxt')
 end
-fun define_simp terms simplifyables ctxt =
+fun define_simp simpables ctxt =
 let
   fun cond ((term,simplifyable),(defs,ctxt)) =
-    (if null simplifyable then (defs,ctxt)
-      else define_simp' term simplifyable ctxt |>> (fn def => def :: defs))
+    define_simp' term simplifyable ctxt |>> (fn def => def :: defs)
 in
-  List.foldr cond ([], ctxt) (ListPair.zip (terms, simplifyables))
+  List.foldr cond ([], ctxt) simpables
+end
+
+
+fun replace from to =
+  map (map_aterms (fn t => if t = from then to else t))
+fun replaceAll [] = I
+  | replaceAll ((from,to)::xs) = replaceAll xs o replace from to
+fun calculateSimplifications ctxt T_terms term simpables =
+let
+  (* Show where a simplification can take place *)
+    fun reportReductions (t,(i::is)) =
+    (Pretty.writeln (Pretty.str
+      ((Term.term_name t |> fun_name_to_time ctxt true)
+        ^ " can be simplified because only the time-function component of parameter "
+        ^ (Int.toString (i + 1)) ^ " is used. "));
+        reportReductions (t,is))
+      | reportReductions (_,[]) = ()
+    val _ = simpables
+      |> map reportReductions
+
+    (* Register definitions for simplified function *)
+    val (reds, ctxt) = define_simp simpables ctxt
+
+    fun genRetype (Const (nm,T),is) =
+    let
+      val T_name = fun_name_to_time ctxt true nm |> split_name |> List.last
+      val from = Free (T_name,change_typ T)
+      val to = Free (T_name,change_typ' (not o contains is) T)
+    in
+      (from,to)
+    end
+      | genRetype _ = error "Internal error: invalid term"
+    val retyping = map genRetype simpables
+
+    fun replaceArgs (pT $ (eq $ l $ r)) =
+    let
+      val (t,params) = strip_comb l
+      fun match (Const (f_nm,_),_) = 
+            (fun_name_to_time ctxt true f_nm |> Long_Name.base_name) = (dest_Free t |> fst)
+        | match _ = false
+      val simps = List.find match simpables |> Option.valOf |> snd
+
+      fun dest_Prod_snd (Free (nm, Type (_, [_, T2]))) =
+            Free (fun_name_to_time ctxt false nm, T2)
+        | dest_Prod_snd _ = error "Internal error: Argument is not a pair"
+      fun rep _ [] = ([],[])
+        | rep i (x::xs) =
+      let 
+        val (rs,args) = rep (i+1) xs
+      in
+        if contains simps i
+          then (x::rs,dest_Prod_snd x::args)
+          else (rs,x::args)
+      end
+      val (rs,params) = rep 0 params
+      fun fFst _ = error "Internal error: Invalid term to simplify"
+      fun fSnd (t as (Const _ $ f)) =
+        (if contains rs f
+          then dest_Prod_snd f
+          else t)
+        | fSnd t = t
+    in
+      (pT $ (eq
+          $ (list_comb (t,params))
+          $ (replaceFstSndFree ctxt term fFst fSnd r
+              |> (fn t => replaceAll (map (fn t => (t,dest_Prod_snd t)) rs) [t])
+              |> hd
+            )
+      ))
+    end
+    | replaceArgs _ = error "Internal error: Invalid term"
+
+    (* Calculate reduced terms *)
+    val T_terms_red = T_terms
+      |> replaceAll retyping
+      |> map replaceArgs
+
+    val _ = print_lemma ctxt reds T_terms_red
+    val _ = 
+        Pretty.writeln (Pretty.str "If you do not want the simplified T function, use \"time_fun [no_simp]\"")
+in
+  ctxt
 end
 
 (* Register timing function of a given function *)
@@ -589,13 +708,23 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
         of SOME _ => error ("Timing function already declared: " ^ (Term.term_name (hd term)))
          | NONE => ()
 
+    (* Number of terms fixed by locale *)
+    val fixedNum = term
+      |> hd
+      |> strip_comb |> snd
+      |> length
+
     (* 1. Fix all terms *)
     (* Exchange Var in types and terms to Free and check constraints *)
     val terms = map
-      (map_aterms fixTerms
-        #> map_types (map_atyps fixTypes)
-        #> fixPartTerms lthy term)
+      (map_aterms freeTerms
+        #> map_types (map_atyps freeTypes)
+        #> fixTerms lthy term fixedNum)
       terms
+    val fixedFrees = (hd term) |> strip_comb |> snd |> take fixedNum 
+    val fixedFreesNames = map (fst o dest_Free) fixedFrees
+    val term = map (shortFunc fixedNum o fst o strip_comb) term
+
 
     (* 2. Find properties about the function *)
     (* 2.1 Check if function is recursive *)
@@ -606,35 +735,44 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       - On left side change name of function to timing function
       - Convert right side of equation with conversion schema
     *)
-    val T_terms = map (convert_term lthy term is_rec (K true)) terms
+    fun fFst (t as (Const (_,T) $ Free (nm,_))) =
+      (if contains fixedFreesNames nm
+        then Free (nm,strip_type T |>> tl |> (op --->))
+        else t)
+      | fFst t = t
+    fun fSnd (t as (Const (_,T) $ Free (nm,_))) =
+      (if contains fixedFreesNames nm
+        then Free (fun_name_to_time lthy false nm,strip_type T |>> tl |> (op --->))
+        else t)
+      | fSnd t = t
+    val T_terms = map (convert_term lthy term is_rec) terms
+      |> map (map_r (replaceFstSndFree lthy term fFst fSnd))
 
-    val simplifyable = if simp
+    val simpables = (if simp
       then find_simplifyble lthy term T_terms
-      else map (K []) term
-    fun detectRename (t,_::_) = SOME t
-      | detectRename (_,[]) = NONE
-    val renaming =
-      simplifyable
+      else map (K []) term)
       |> (fn s => ListPair.zip (term,s))
-      |> map detectRename
+    (* Determine if something is simpable, if so rename everything *)
+    val simpable = simpables |> map snd |> exists (not o null)
     (* Rename to secondary if simpable *)
-    fun rename (SOME t,T_terms) =
+    fun genRename (t,_) =
       let
-        val old = fun_to_time lthy (K true) (K true) term t |> Option.valOf
-        val new = fun_to_time' lthy (K true) (K true) term true t |> Option.valOf
+        val old = fun_to_time lthy term t |> Option.valOf
+        val new = fun_to_time' lthy term true t |> Option.valOf
       in
-        map (map_aterms (fn t => if t = old then new else t)) T_terms
+        (old,new)
       end
-      | rename (_,T_terms) = T_terms
-    val T_terms = List.foldr rename T_terms renaming
+    val can_T_terms = if simpable 
+      then replaceAll (map genRename simpables) T_terms
+      else T_terms
 
     (* 4. Register function and prove completeness *)
     val names = map Term.term_name term
-    val timing_names = map (fn (r,nm) => fun_name_to_time' lthy true (Option.isSome r) nm) (ListPair.zip (renaming,names))
+    val timing_names = map (fun_name_to_time' lthy true simpable) names
     val bindings = map (fn nm => (Binding.name nm, NONE, NoSyn)) timing_names
     fun pat_completeness_auto ctxt =
       Pat_Completeness.pat_completeness_tac ctxt 1 THEN auto_tac ctxt
-    val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) T_terms
+    val specs = map (fn eq => (((Binding.empty, []), eq), [], [])) can_T_terms
 
     (* Context for printing without showing question marks *)
     val print_ctxt = lthy
@@ -648,7 +786,7 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
           val typs = map (dest_Const_type) term
         in
           print_timing' print_ctxt { names=nms, terms=terms, typs=typs }
-            { names=timing_names, terms=T_terms, typs=map change_typ typs }
+            { names=timing_names, terms=can_T_terms, typs=map change_typ typs }
         end
     
     (* For partial functions sequential=true is needed in order to support them
@@ -670,39 +808,7 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
              | Match =>
           register true
 
-    (* Show where reduction can happen *)
-    fun reportReductions (t,(i::is)) =
-    (Pretty.writeln (Pretty.str
-      ((Term.term_name t |> fun_name_to_time ctxt true)
-        ^ " can be simplified because only the time-function component of parameter "
-        ^ (Int.toString (i + 1)) ^ " is used. "));
-        reportReductions (t,is))
-      | reportReductions (_,[]) = ()
-    val _ = simplifyable
-      |> (fn s => ListPair.zip (term,s))
-      |> map reportReductions
-
-    (* Register definitions for simplified function *)
-    val (reds, ctxt) = define_simp term simplifyable ctxt
-
-    fun used (t,i) =
-      List.exists
-      (fn (t',i') => if t = t' then contains i' i else false)
-      (ListPair.zip (term,simplifyable))
-      |> not
-    fun convert_red t =
-      if t |> get_l |> strip_comb |> fst |> SOME |> contains renaming
-      then SOME (convert_term lthy term is_rec used t)
-      else NONE
-
-    (* Calculate reduced terms *)
-    val T_terms_red = terms
-      |> List.mapPartial convert_red
-    val _ = if List.null T_terms_red then ()
-      else (
-        print_lemma ctxt reds T_terms_red;
-        Pretty.writeln (Pretty.str "If you do not want the simplified T function, use \"time_fun [no_simp]\"")
-      )
+    val ctxt = if simpable then calculateSimplifications ctxt T_terms term simpables else ctxt
   in
     (info,ctxt)
   end
@@ -725,7 +831,7 @@ fun proove_termination (term: term list) terms (T_info: Function.info, lthy: loc
             | args (a$(Const (_,T))) = args a |> (fn ar => ("uu",T)::ar)
             | args _ = []
           val dom_vars =
-            terms |> hd |> get_l |> map_types (map_atyps fixTypes)
+            terms |> hd |> get_l |> map_types (map_atyps freeTypes)
             |> args |> Variable.variant_frees lthy []
           val dom_args = 
             List.foldl (fn (t,p) => HOLogic.mk_prod ((Free t),p)) (Free (hd dom_vars)) (tl dom_vars)
@@ -801,7 +907,7 @@ let
   val fterms = map (Syntax.read_term ctxt) funcs
   val ctxt = set_suffix fterms ctxt
   val (_, ctxt') = reg_and_proove_time_func ctxt fterms
-    (case thms of NONE => get_terms ctxt (hd fterms) |> @{print}
+    (case thms of NONE => get_terms ctxt (hd fterms)
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
     true (not no_simp)
 in ctxt'
@@ -837,7 +943,7 @@ end
 val parser = (Parse.opt_attribs >> map (fst o Token.name_of_src))
              -- Scan.repeat1 Parse.prop
              -- Scan.option (Parse.keyword_improper "equations" -- Parse.thms1 >> snd)
-
+val _ = Toplevel.local_theory
 val _ = Outer_Syntax.local_theory @{command_keyword "time_fun"}
   "Defines runtime function of a function"
   (parser >> reg_time_fun_cmd)
