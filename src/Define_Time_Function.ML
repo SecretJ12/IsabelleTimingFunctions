@@ -503,6 +503,10 @@ fun time_dom_tac ctxt induct_rule domintros =
     [Metis_Tactic.metis_tac [] ATP_Problem_Generate.combsN ctxt domintros]) i)))
 
 
+fun fix_definition (Const ("Pure.eq", _) $ l $ r) = HOLogic.mk_Trueprop (HOLogic.mk_eq (l,r))
+  | fix_definition t = t
+fun check_definition [t] = [t]
+  | check_definition _ = error "Only a single definition is allowed"
 fun get_terms theory (term: term) =
 let
   val equations = Spec_Rules.retrieve theory term
@@ -511,6 +515,7 @@ let
    handle Empty => error "Function or terms of function not found"
 in
   equations
+    |> map (map fix_definition)
     |> filter (List.exists
         (fn t => typ_comp (t |> get_l |> strip_comb |> fst |> dest_Const |> snd) (term |> strip_comb |> fst |> dest_Const |> snd)))
     |> hd
@@ -714,6 +719,8 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       |> strip_comb |> snd
       |> length
 
+    val _ = @{print} "no checkpoint"
+
     (* 1. Fix all terms *)
     (* Exchange Var in types and terms to Free and check constraints *)
     val terms = map
@@ -724,6 +731,8 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
     val fixedFrees = (hd term) |> strip_comb |> snd |> take fixedNum 
     val fixedFreesNames = map (fst o dest_Free) fixedFrees
     val term = map (shortFunc fixedNum o fst o strip_comb) term
+
+    val _ = @{print} "checkpoint 1"
 
 
     (* 2. Find properties about the function *)
@@ -859,12 +868,6 @@ fun reg_and_proove_time_func (lthy: local_theory) (term: term list) (terms: term
   reg_time_func lthy term terms print simp
   |> proove_termination term terms
 
-fun fix_definition (Const ("Pure.eq", _) $ l $ r) = Const ("HOL.Trueprop", @{typ "bool \<Rightarrow> prop"})
-      $ (Const ("HOL.eq", @{typ "bool \<Rightarrow> bool \<Rightarrow> bool"}) $ l $ r)
-  | fix_definition t = t
-fun check_definition [t] = [t]
-  | check_definition _ = error "Only a single definition is allowed"
-
 fun isTypeClass' (Const (nm,_)) =
   (case split_name nm |> rev
     of (_::nm::_) => String.isSuffix "_class" nm
@@ -934,7 +937,7 @@ let
   val fterms = map (Syntax.read_term ctxt) funcs
   val ctxt = set_suffix fterms ctxt
   val (_, ctxt') = reg_and_proove_time_func ctxt fterms
-    (case thms of NONE => get_terms ctxt (hd fterms) |> check_definition |> map fix_definition
+    (case thms of NONE => get_terms ctxt (hd fterms) |> check_definition
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
     true (not no_simp)
 in ctxt'
