@@ -381,4 +381,16 @@ lemma "t_map2 g xs = T_map2 g xs"
 
 end
 
+definition "map_nat xs \<equiv> map (\<lambda>n. 2*n + 1) xs"
+definition "t_map_nat xs \<equiv> T_map (\<lambda>n. 0) xs"
+time_definition map_nat
+lemma "t_map_nat xs = T_map_nat xs"
+  by (induction xs) (auto simp: t_map_nat_def)
+
+definition "map2_nat xs \<equiv> map2 (\<lambda>n. 2*n + 1) xs"
+definition "t_map2_nat xs \<equiv> T_map2 (\<lambda>n. 2*n+1, \<lambda>n. 0) xs"
+time_definition map2_nat
+lemma "t_map2_nat xs = T_map2_nat xs"
+  by (induction xs) (auto simp: t_map2_nat_def)
+
 end
