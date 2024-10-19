@@ -223,8 +223,8 @@ type 'a converter = {
 
 (* Walks over term and calls given converter *)
 (* get rid and use Term.strip_abs.eta especially for lambdas *)
-fun build_abs t ((nm,T)::abs) = build_abs (Abs (nm,T,t)) abs
-  | build_abs t [] = t
+fun list_abs ([], t) = t
+  | list_abs (a::abs,t) = list_abs (abs,t) |> absfree a
 fun walk ctxt (origin: term list) (conv as {ifc, casec, funcc, letc, ...} : 'a converter) (t as _ $ _) =
   let
     val (f, args) = strip_comb t
@@ -241,7 +241,7 @@ fun walk ctxt (origin: term list) (conv as {ifc, casec, funcc, letc, ...} : 'a c
       else if is_let f then
       (case f of (Const (_,lT)) =>
          (case args of [exp, t] =>
-            let val (abs,t) = strip_abs t in letc wctxt lT exp abs t end
+            let val (abs,t) = Term.strip_abs_eta 1 t in letc wctxt lT exp abs t end
                      | _ => error "Partial applications not allowed (let)")
                | _ => error "Internal error: invalid let term")
       else funcc wctxt f args)
@@ -254,7 +254,7 @@ fun Iif (wctxt: term wctxt) T cond tt tf =
   Const (@{const_name "HOL.If"}, T) $ (#f wctxt cond) $ (#f wctxt tt) $ (#f wctxt tf)
 fun Icase (wctxt: term wctxt) t cs = list_comb (#f wctxt t,map (#f wctxt) cs)
 fun Ilet (wctxt: term wctxt) lT exp abs t =
-  Const (@{const_name "HOL.Let"},lT) $ (#f wctxt exp) $ build_abs (#f wctxt t) abs
+  Const (@{const_name "HOL.Let"},lT) $ (#f wctxt exp) $ list_abs (abs, #f wctxt t)
 
 (* 1. Fix all terms *)
 (* Exchange Var in types and terms to Free *)
@@ -286,8 +286,6 @@ fun shortOriginFunc (term: term list) fixedNum (f as (c as Const (_,_), _))  =
   if contains' const_comp term c then shortApp fixedNum f else f
   | shortOriginFunc _ _ t = t
 val _ = strip_abs
-fun list_abs ([], t) = t
-  | list_abs (a::abs,t) = list_abs (abs,absfree a t)
 fun map_abs f (t as Abs _) = t |> strip_abs ||> f |> list_abs
   | map_abs _ t = t
 fun fixTerms ctxt (term: term list) (fixedNum: int) (t as pT $ (eq $ l $ r)) =
@@ -302,13 +300,7 @@ fun fixTerms ctxt (term: term list) (fixedNum: int) (t as pT $ (eq $ l $ r)) =
           ifc = Iif,
           casec = fixCasec,
           letc = (fn wctxt => fn expT => fn exp => fn abs => fn t =>
-              let
-                val _ = @{print} "begin let"
-                val f' = if length abs = 0 then
-                (case (#f wctxt) (t$exp) of t$_ => t | _ => error "Internal error: case could not be fixed (let)")
-                else (#f wctxt) t
-                val _ = @{print} "end let"
-              in (Const (@{const_name "HOL.Let"},expT) $ ((#f wctxt) exp) $ build_abs f' abs) end)
+              (Const (@{const_name "HOL.Let"},expT) $ (#f wctxt exp) $ list_abs (abs, #f wctxt t)))
       } r
   in
     pT $ (eq $ l' $ r')
@@ -453,21 +445,24 @@ fun ifc wctxt _ cond tt ft =
        (SOME ((Const (@{const_name "HOL.If"}, @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ rcond $ (opt_term tt) $ (opt_term ft))))
   end
 
-fun letc_change_typ (Type ("fun", [T1, Type ("fun", [T2, _])])) = (Type ("fun", [T1, Type ("fun", [change_typ T2, HOLogic.natT])]))
-  | letc_change_typ _ = error "Internal error: invalid let type"
-fun letc wctxt expT exp abs t =
-    plus (#f wctxt exp)
-    (if length abs = 0 (* In case of "length nms = 0" the expression got reducted
-                          Here we need Bound 0 to gain non-partial application *)
-    then (case #f wctxt (t $ Bound 0) of SOME (t' $ Bound 0) =>
-                                 (SOME (Const (@{const_name "HOL.Let"}, letc_change_typ expT) $ (map_aterms use_origin exp) $ t'))
-                                  (* Expression is not used and can therefore let be dropped *)
-                                | SOME t' => SOME t'
-                                | NONE => NONE)
-    else (case #f wctxt t of SOME t' =>
-      SOME (if Term.is_dependent t' then Const (@{const_name "HOL.Let"}, letc_change_typ expT) $ (map_aterms use_origin exp) $ build_abs t' abs
-                                    else Term.subst_bounds([exp],t'))
-    | NONE => NONE))
+fun letc_lambda wctxt T (t as Abs _) =
+      HOLogic.mk_prod (map_aterms use_origin t, 
+       Term.strip_abs_eta (strip_type T |> fst |> length) t ||> #f wctxt ||> opt_term |> list_abs)
+  | letc_lambda _ _ t = map_aterms use_origin t
+fun letc wctxt expT exp ([(nm,_)]) t =
+      plus (#f wctxt exp)
+      (case #f wctxt t of SOME t' =>
+        (if Term.used_free nm t'
+         then
+          let
+            val exp' = letc_lambda wctxt expT exp
+            val t' = list_abs ([(nm,type_of exp')], t')
+          in
+            Const (@{const_name "HOL.Let"}, [type_of exp', type_of t'] ---> HOLogic.natT) $ exp' $ t'
+          end
+         else t') |> SOME
+      | NONE => NONE)
+  | letc _ _ _ _ _ = error "Unknown let state"
 
 fun constc _ (Const ("HOL.undefined", _)) = SOME (Const ("HOL.undefined", @{typ "nat"}))
   | constc _ _ = NONE
@@ -740,8 +735,6 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       |> hd
       |> strip_comb |> snd
       |> length
-    
-val _ = @{print} terms
 
     (* 1. Fix all terms *)
     (* Exchange Var in types and terms to Free and check constraints *)
@@ -753,8 +746,6 @@ val _ = @{print} terms
     val fixedFrees = (hd term) |> strip_comb |> snd |> take fixedNum 
     val fixedFreesNames = map (fst o dest_Free) fixedFrees
     val term = map (shortFunc fixedNum o fst o strip_comb) term
-
-val _ = @{print} terms
 
     fun correctTerm term =
     let
