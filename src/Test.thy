@@ -393,4 +393,7 @@ time_definition map2_nat
 lemma "t_map2_nat xs = T_map2_nat xs"
   by (induction xs) (auto simp: t_map2_nat_def)
 
+definition "let_lambda a b c \<equiv> let lam = (\<lambda>a b. a + b) in lam a (lam b c)"
+time_fun let_lambda
+
 end
