@@ -285,6 +285,11 @@ fun shortApp fixedNum (c, args) =
 fun shortOriginFunc (term: term list) fixedNum (f as (c as Const (_,_), _))  =
   if contains' const_comp term c then shortApp fixedNum f else f
   | shortOriginFunc _ _ t = t
+val _ = strip_abs
+fun list_abs ([], t) = t
+  | list_abs (a::abs,t) = list_abs (abs,absfree a t)
+fun map_abs f (t as Abs _) = t |> strip_abs ||> f |> list_abs
+  | map_abs _ t = t
 fun fixTerms ctxt (term: term list) (fixedNum: int) (t as pT $ (eq $ l $ r)) =
   let
     val _ = check_args "args" (strip_comb (get_l t))
@@ -292,15 +297,17 @@ fun fixTerms ctxt (term: term list) (fixedNum: int) (t as pT $ (eq $ l $ r)) =
     val shortOriginFunc' = shortOriginFunc (term |> map (fst o strip_comb)) fixedNum
     val r' = walk ctxt term {
           funcc = (fn wctxt => fn t => fn args =>
-              (check_args "func" (t,args); (t, map (#f wctxt) args) |> shortOriginFunc' |> list_comb)),
-          constc = (fn _ => fn c => (case c of Abs _ => error "Lambdas not supported" | _ => c)),
+              (check_args "func" (t,args); (#f wctxt t, map (#f wctxt) args) |> shortOriginFunc' |> list_comb)),
+          constc = fn wctxt => map_abs (#f wctxt),
           ifc = Iif,
           casec = fixCasec,
           letc = (fn wctxt => fn expT => fn exp => fn abs => fn t =>
               let
+                val _ = @{print} "begin let"
                 val f' = if length abs = 0 then
                 (case (#f wctxt) (t$exp) of t$_ => t | _ => error "Internal error: case could not be fixed (let)")
                 else (#f wctxt) t
+                val _ = @{print} "end let"
               in (Const (@{const_name "HOL.Let"},expT) $ ((#f wctxt) exp) $ build_abs f' abs) end)
       } r
   in
@@ -315,7 +322,9 @@ fun find_rec ctxt term = (walk ctxt term {
           funcc = (fn wctxt => fn t => fn args =>
             List.exists (fn term => (Const_name t) = (Const_name term)) term
              orelse List.foldr (or (#f wctxt)) false args),
-          constc = (K o K) false,
+          constc = fn wctxt => fn t => case t of
+                Abs _ => t |> strip_abs |> snd |> (#f wctxt)
+              | _ => false,
           ifc = (fn wctxt => fn _ => fn cond => fn tt => fn tf =>
             (#f wctxt) cond orelse (#f wctxt) tt orelse (#f wctxt) tf),
           casec = (fn wctxt => fn t => fn cs =>
@@ -367,12 +376,24 @@ fun funcc_conv_arg _ _ (t as (_ $ _)) = map_aterms funcc_use_origin t
   | funcc_conv_arg _ u (Free (nm, T as Type ("fun",_))) =
       if u then Free (nm, HOLogic.mk_prodT (T, change_typ T))
       else HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
-  | funcc_conv_arg wctxt true (f as Const (_,T as Type ("fun",_))) =
-  (Const (@{const_name "Product_Type.Pair"},
-      Type ("fun", [T,Type ("fun", [change_typ T, HOLogic.mk_prodT (T,change_typ T)])]))
-    $ f $ (Option.getOpt (fun_to_time (#ctxt wctxt) (#origins wctxt) f, build_zero T)))
+  | funcc_conv_arg wctxt true (f as Const (_,Type ("fun",_))) =
+      HOLogic.mk_prod (f, funcc_conv_arg wctxt false f)
   | funcc_conv_arg wctxt false (f as Const (_,T as Type ("fun",_))) =
       Option.getOpt (fun_to_time (#ctxt wctxt) (#origins wctxt) f, build_zero T)
+  | funcc_conv_arg wctxt false (f as Abs _) =
+       f
+       |> Term.strip_abs_eta ((length o fst o strip_type o type_of) f)
+       ||> #f wctxt ||> opt_term
+       |> list_abs
+  | funcc_conv_arg wctxt true (f as Abs _) =
+    let
+      val f' = f
+       |> Term.strip_abs_eta ((length o fst o strip_type o type_of) f)
+       ||> map_aterms funcc_use_origin
+       |> list_abs
+    in
+      HOLogic.mk_prod (f', funcc_conv_arg wctxt false f)
+    end
   | funcc_conv_arg _ _ t = t
 
 fun funcc_conv_args _ _ [] = []
@@ -387,9 +408,9 @@ let
     | get_T _ = error "Internal error: Forgotten type"
 in
   List.foldr (I #-> plus)
-  (case fun_to_time (#ctxt wctxt) (#origins wctxt) func
-    of SOME t => SOME (list_comb (t,funcc_conv_args wctxt (get_T t) args))
-    | NONE => NONE)
+  (case fun_to_time (#ctxt wctxt) (#origins wctxt) func (* add case for abs *)
+    of SOME t => SOME (list_comb (t, funcc_conv_args wctxt (get_T t) args))
+     | NONE => NONE)
   (map (#f wctxt) args)
 end
 
@@ -448,11 +469,12 @@ fun letc wctxt expT exp abs t =
                                     else Term.subst_bounds([exp],t'))
     | NONE => NONE))
 
+fun constc _ (Const ("HOL.undefined", _)) = SOME (Const ("HOL.undefined", @{typ "nat"}))
+  | constc _ _ = NONE
+
 (* The converter for timing functions given to the walker *)
 val converter : term option converter = {
-        constc = fn _ => fn t =>
-          (case t of Const ("HOL.undefined", _) => SOME (Const ("HOL.undefined", @{typ "nat"}))
-                   | _ => NONE),
+        constc = constc,
         funcc = funcc,
         ifc = ifc,
         casec = casec,
@@ -718,8 +740,8 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       |> hd
       |> strip_comb |> snd
       |> length
-
-    val _ = @{print} "no checkpoint"
+    
+val _ = @{print} terms
 
     (* 1. Fix all terms *)
     (* Exchange Var in types and terms to Free and check constraints *)
@@ -732,8 +754,16 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
     val fixedFreesNames = map (fst o dest_Free) fixedFrees
     val term = map (shortFunc fixedNum o fst o strip_comb) term
 
-    val _ = @{print} "checkpoint 1"
+val _ = @{print} terms
 
+    fun correctTerm term =
+    let
+      val get_f = fst o strip_comb o get_l
+    in
+      List.find (fn t => (dest_Const_name o get_f) t = dest_Const_name term) terms
+        |> Option.valOf |> get_f
+    end
+    val term = map correctTerm term
 
     (* 2. Find properties about the function *)
     (* 2.1 Check if function is recursive *)
