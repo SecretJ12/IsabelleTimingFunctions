@@ -289,9 +289,34 @@ fun fixTerms ctxt (term: term list) (fixedNum: int) (t as pT $ (eq $ l $ r)) =
     val _ = check_args "args" (strip_comb (get_l t))
     val l' = shortApp fixedNum (strip_comb l) |> list_comb
     val shortOriginFunc' = shortOriginFunc (term |> map (fst o strip_comb)) fixedNum
+    val consts = Proof_Context.consts_of ctxt
+    val net = Consts.revert_abbrevs consts ["internal"] |> hd |> Item_Net.content
+                (* filter out consts *)
+              |> filter (is_Const o fst o strip_comb o fst)
+                (* filter out abbreviations for locales *)
+              |> filter (fn n => "local"
+                  = (n |> snd |> strip_comb |> fst |> dest_Const_name |> split_name |> hd))
+              |> filter (fn n => (n |> fst |> strip_comb |> fst |> dest_Const_name |> split_name |> List.last) =
+                (n |> snd |> strip_comb |> fst |> dest_Const_name |> split_name |> List.last))
+              |> map (fst #> strip_comb #>> dest_Const_name ##> length)
+    fun n_abbrev (Const (nm,_)) =
+    let
+      val f = filter (fn n => fst n = nm) net
+    in
+      if length f >= 1 then f |> hd |> snd else 0
+    end
+      | n_abbrev _ = 0
     val r' = walk ctxt term {
           funcc = (fn wctxt => fn t => fn args =>
-              (check_args "func" (t,args); (#f wctxt t, map (#f wctxt) args) |> shortOriginFunc' |> list_comb)),
+            let
+              val n_abb = n_abbrev t
+              val t = case t of Const (nm,T) => Const (nm, T |> strip_type |>> drop n_abb |> (op --->))
+                              | t => t
+              val args = drop n_abb args           
+            in
+              (check_args "func" (t,args);
+               (#f wctxt t, map (#f wctxt) args) |> shortOriginFunc' |> list_comb)
+            end),
           constc = fn wctxt => map_abs (#f wctxt),
           ifc = Iif,
           casec = fixCasec,
@@ -728,8 +753,7 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
          | NONE => ()
 
     (* Number of terms fixed by locale *)
-    val fixedNum = term
-      |> hd
+    val fixedNum = term |> hd
       |> strip_comb |> snd
       |> length
 
