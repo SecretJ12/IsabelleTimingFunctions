@@ -251,7 +251,7 @@ fun Ifunc (wctxt: term wctxt) t args = list_comb (#f wctxt t,map (#f wctxt) args
 val Iconst = K I
 fun Iif (wctxt: term wctxt) T cond tt tf =
   Const (@{const_name "HOL.If"}, T) $ (#f wctxt cond) $ (#f wctxt tt) $ (#f wctxt tf)
-fun Icase (wctxt: term wctxt) t cs = list_comb (#f wctxt t,map (#f wctxt) cs)
+fun Icase (wctxt: term wctxt) t cs = list_comb (#f wctxt t,map (strip_abs ##> #f wctxt #> list_abs) cs)
 fun Ilet (wctxt: term wctxt) lT exp abs t =
   Const (@{const_name "HOL.Let"},lT) $ (#f wctxt exp) $ list_abs (abs, #f wctxt t)
 

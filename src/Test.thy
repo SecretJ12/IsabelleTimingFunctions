@@ -396,4 +396,38 @@ lemma "t_map2_nat xs = T_map2_nat xs"
 definition "let_lambda a b c \<equiv> let lam = (\<lambda>a b. a + b) in lam a (lam b c)"
 time_fun let_lambda
 
+datatype testtype = ffff | gggg
+locale test1 =
+  fixes y::"testtype" and T_y ::"nat"
+begin
+
+definition "f_f (x::testtype) = y"
+fun join :: "testtype \<Rightarrow> testtype \<Rightarrow> testtype" where
+"join ffff gggg = (f_f ffff)"
+time_fun f_f
+time_fun join
+
+end
+
+
+datatype return = Reachable | NotReachable
+record ('ver, 'neighb) DFS_state = stack:: "'ver list" seen:: "'neighb"  return:: return
+time_fun return
+time_function seen
+time_function stack
+locale dfs_test =
+  fixes sel::"'neighb \<Rightarrow> 'a" and T_sel::"'neighb \<Rightarrow> nat"
+begin
+
+definition "get_state_vertex dfs_state = sel (seen dfs_state)"
+time_fun get_state_vertex
+
+definition "get_state_vertex' dfs_state =  
+  (case stack dfs_state of
+      [] \<Rightarrow> sel (seen dfs_state)
+    | Cons _ _ \<Rightarrow> sel (seen dfs_state))"
+
+time_fun get_state_vertex'
+end
+
 end
