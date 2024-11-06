@@ -430,4 +430,49 @@ definition "get_state_vertex' dfs_state =
 time_fun get_state_vertex'
 end
 
+time_fun take
+time_fun drop
+fun chop :: "nat \<Rightarrow> 'a list \<Rightarrow> 'a list list" where
+  "chop 0 _  = []"
+| "chop _ [] = []"
+| "chop n xs = take n xs # chop n (drop n xs)"
+time_fun chop
+fun insort1 :: "'a::linorder \<Rightarrow> 'a list \<Rightarrow> 'a list" where
+  "insort1 x [] = [x]" |
+  "insort1 x (y#ys) =
+  (if x \<le> y then x#y#ys else y#(insort1 x ys))"
+time_fun insort1
+fun insort :: "'a::linorder list \<Rightarrow> 'a list" where
+  "insort [] = []" |
+  "insort (x#xs) = insort1 x (insort xs)"
+time_fun insort
+time_fun nth
+definition slow_select where
+  "slow_select k xs = insort xs ! k"
+time_fun slow_select
+definition slow_median where
+  "slow_median xs = slow_select ((length xs - 1) div 2) xs"
+time_fun slow_median
+definition partition3 :: "'a \<Rightarrow> 'a :: linorder list \<Rightarrow> 'a list \<times> 'a list \<times> 'a list" where
+  "partition3 x xs = (filter (\<lambda>y. y < x) xs, filter (\<lambda>y. y = x) xs, filter (\<lambda>y. y > x) xs)"
+time_fun partition3
+function mom_select :: "nat \<Rightarrow> 'a :: linorder list \<Rightarrow> 'a" where
+   "mom_select k xs = (
+      let n = length xs in
+      if n \<le> 20 then
+        slow_select k xs
+      else
+        let M = mom_select (((n + 4) div 5 - 1) div 2) (map slow_median (chop 5 xs));
+            (ls, es, gs) = partition3 M xs;
+            nl = length ls
+        in
+          if k < nl then mom_select k ls
+          else let ne = length es in if k < nl + ne then M
+          else mom_select (k - nl - ne) gs
+       )"
+  by auto
+termination sorry
+time_function mom_select
+termination sorry
+
 end

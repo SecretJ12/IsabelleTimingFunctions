@@ -251,9 +251,10 @@ fun Ifunc (wctxt: term wctxt) t args = list_comb (#f wctxt t,map (#f wctxt) args
 val Iconst = K I
 fun Iif (wctxt: term wctxt) T cond tt tf =
   Const (@{const_name "HOL.If"}, T) $ (#f wctxt cond) $ (#f wctxt tt) $ (#f wctxt tf)
-fun Icase (wctxt: term wctxt) t cs = list_comb (#f wctxt t,map (strip_abs ##> #f wctxt #> list_abs) cs)
+fun Icase (wctxt: term wctxt) t cs = list_comb
+  (#f wctxt t,map (fn c => c |> Term.strip_abs_eta (c |> fastype_of |> strip_type |> fst |> length) ||> #f wctxt |> list_abs) cs)
 fun Ilet (wctxt: term wctxt) lT exp abs t =
-  Const (@{const_name "HOL.Let"},lT) $ (#f wctxt exp) $ list_abs (abs, #f wctxt t)
+  Const (@{const_name "HOL.Let"}, lT) $ (#f wctxt exp) $ list_abs (abs, #f wctxt t)
 
 (* 1. Fix all terms *)
 (* Exchange Var in types and terms to Free *)
