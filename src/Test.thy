@@ -475,4 +475,21 @@ termination sorry
 time_function mom_select
 termination sorry
 
+partial_function (tailrec) collatz :: "nat \<Rightarrow> bool" where
+  "collatz n = (if n \<le> 1 then True
+                else if n mod 2 = 0 then collatz (n div 2)
+                else collatz (3 * n + 1))"
+
+partial_function (option) T_collatz' :: "nat \<Rightarrow> nat option" where
+  "T_collatz' n = (if n \<le> 1 then Some 0
+                else if n mod 2 = 0 then Option.bind (T_collatz' (n div 2)) (\<lambda>k. Some (Suc k))
+                else Option.bind (T_collatz' (3 * n + 1)) (\<lambda>k. Some (Suc k)))"
+time_fun_0 "(mod)"
+time_partial_function collatz
+lemma setIt: "P i \<Longrightarrow> \<forall>n \<in> {Suc i..j}. P n \<Longrightarrow> \<forall>n \<in> {i..j}. P n"
+  by (metis atLeastAtMost_iff le_antisym not_less_eq_eq)
+lemma "\<forall>n \<in> {2..20}. T_collatz n = T_collatz' n"
+  apply (rule setIt, simp add: T_collatz.simps T_collatz'.simps, simp)+
+  by (simp add: T_collatz.simps T_collatz'.simps)
+
 end
