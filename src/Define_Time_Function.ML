@@ -26,10 +26,15 @@ val fun_pretty:  Proof.context -> Function.info -> Pretty.T
 val print_timing':  Proof.context -> pfunc -> pfunc -> unit
 val print_timing:  Proof.context -> Function.info -> Function.info -> unit
 
+type time_config = {
+  print: bool,
+  simp: bool,
+  partial: bool
+}
 val reg_and_proove_time_func: local_theory -> term list -> term list
-      -> bool -> bool -> Function.info * local_theory
+      -> time_config -> Function.info * local_theory
 val reg_time_func: local_theory -> term list -> term list
-      -> bool -> bool -> Function.info * local_theory
+      -> time_config -> Function.info * local_theory
 
 val time_dom_tac: Proof.context -> thm -> thm list -> int -> tactic
 
@@ -136,7 +141,7 @@ fun is_let (Const (@{const_name "HOL.Let"},_)) = true
     and replace all function arguments f with (t*T_f) if used *)
 fun change_typ' used (Type ("fun", [T1, T2])) = 
       Type ("fun", [check_for_fun' (used 0) T1, change_typ' (fn i => used (i+1)) T2])
-  | change_typ' _ _ = HOLogic.natT
+  | change_typ' _ _ = Term.dummyT
 and check_for_fun' true (f as Type ("fun", [_,_])) = HOLogic.mk_prodT (f, change_typ' (K false) f)
   | check_for_fun' false (f as Type ("fun", [_,_])) = change_typ' (K true) f
   | check_for_fun' _ t = t
@@ -185,6 +190,7 @@ fun typ_comp (Type (A,a)) (Type (B,b)) = (A = B) andalso List.foldl (fn ((c,i),s
   | typ_comp _ _ = true
 fun const_comp (Const (nm,T)) (Const (nm',T')) = nm = nm' andalso typ_comp T T'
   | const_comp _ _ = false
+
 
 fun time_term ctxt s (Const (nm,T)) =
 let
@@ -351,14 +357,22 @@ fun is_rec ctxt (term: term list) = List.foldr (or (find_rec ctxt term)) false
 (* 3. Convert equations *)
 (* Some Helper *)
 val plusTyp = @{typ "nat => nat => nat"}
-fun plus (SOME a) (SOME b) = SOME (Const (@{const_name "Groups.plus"}, plusTyp) $ a $ b)
-  | plus (SOME a) NONE = SOME a
-  | plus NONE (SOME b) = SOME b
-  | plus NONE NONE = NONE
-fun opt_term NONE = HOLogic.zero
-  | opt_term (SOME t) = t
+fun plus part (SOME a) (SOME b) = SOME ((if part then @{term part_add} else Const (@{const_name "Groups.plus"}, plusTyp)) $ a $ b)
+  | plus _ (SOME a) NONE = SOME a
+  | plus _ NONE (SOME b) = SOME b
+  | plus _ NONE NONE = NONE
+fun opt_term false NONE = HOLogic.zero
+  | opt_term true NONE = @{term "Some (0::nat)"}
+  | opt_term _ (SOME t) = t
 fun use_origin (Free (nm, T as Type ("fun",_))) = HOLogic.mk_fst (Free (nm,HOLogic.mk_prodT (T, change_typ T)))
   | use_origin t = t
+(* Partial helper *)
+val OPTION_BIND = @{term "Option.bind::nat option \<Rightarrow> (nat \<Rightarrow> nat option) \<Rightarrow> nat option"}
+fun OPTION_ABS_SUC args = Term.absfree ("_uu", @{typ nat})
+  (List.foldr (uncurry (plus true))
+    (SOME (@{term "Some::nat \<Rightarrow> nat option"} $ HOLogic.mk_Suc (Free ("_uu", @{typ nat})))) args |> Option.valOf)
+fun build_option_bind term args =
+  OPTION_BIND $ term $ OPTION_ABS_SUC args
 
 (* Conversion of function term *)
 fun fun_to_time' ctxt (origin: term list) second (func as Const (nm,T)) =
@@ -386,46 +400,48 @@ fun build_zero (Type ("fun", [T, R])) = Abs ("uu", T, build_zero R)
 fun funcc_use_origin (Free (nm, T as Type ("fun",_))) =
     HOLogic.mk_fst (Free (nm,HOLogic.mk_prodT (T, change_typ T)))
   | funcc_use_origin t = t
-fun funcc_conv_arg _ _ (t as (_ $ _)) = map_aterms funcc_use_origin t
-  | funcc_conv_arg _ u (Free (nm, T as Type ("fun",_))) =
+fun funcc_conv_arg _ _ _ (t as (_ $ _)) = map_aterms funcc_use_origin t
+  | funcc_conv_arg _ _ u (Free (nm, T as Type ("fun",_))) =
       if u then Free (nm, HOLogic.mk_prodT (T, change_typ T))
       else HOLogic.mk_snd (Free (nm,HOLogic.mk_prodT (T,change_typ T)))
-  | funcc_conv_arg wctxt true (f as Const (_,Type ("fun",_))) =
-      HOLogic.mk_prod (f, funcc_conv_arg wctxt false f)
-  | funcc_conv_arg wctxt false (f as Const (_,T as Type ("fun",_))) =
+  | funcc_conv_arg partial wctxt true (f as Const (_,Type ("fun",_))) =
+      HOLogic.mk_prod (f, funcc_conv_arg partial wctxt false f)
+  | funcc_conv_arg _ wctxt false (f as Const (_,T as Type ("fun",_))) =
       Option.getOpt (fun_to_time (#ctxt wctxt) (#origins wctxt) f, build_zero T)
-  | funcc_conv_arg wctxt false (f as Abs _) =
+  | funcc_conv_arg partial wctxt false (f as Abs _) =
        f
        |> Term.strip_abs_eta ((length o fst o strip_type o type_of) f)
-       ||> #f wctxt ||> opt_term
+       ||> #f wctxt ||> opt_term partial
        |> list_abs
-  | funcc_conv_arg wctxt true (f as Abs _) =
+  | funcc_conv_arg partial wctxt true (f as Abs _) =
     let
       val f' = f
        |> Term.strip_abs_eta ((length o fst o strip_type o type_of) f)
        ||> map_aterms funcc_use_origin
        |> list_abs
     in
-      HOLogic.mk_prod (f', funcc_conv_arg wctxt false f)
+      HOLogic.mk_prod (f', funcc_conv_arg partial wctxt false f)
     end
-  | funcc_conv_arg _ _ t = t
+  | funcc_conv_arg _ _ _ t = t
 
-fun funcc_conv_args _ _ [] = []
-  | funcc_conv_args wctxt (Type ("fun", [t, ts])) (a::args) =
-      funcc_conv_arg wctxt (is_Used t) a :: funcc_conv_args wctxt ts args
-  | funcc_conv_args _ _ _ = error "Internal error: Non matching type"
-fun funcc wctxt func args =
+fun funcc_conv_args _ _ _ [] = []
+  | funcc_conv_args partial wctxt (Type ("fun", [t, ts])) (a::args) =
+      funcc_conv_arg partial wctxt (is_Used t) a :: funcc_conv_args partial wctxt ts args
+  | funcc_conv_args _ _ _ _ = error "Internal error: Non matching type"
+fun funcc partial wctxt func args =
 let
   fun get_T (Free (_,T)) = T
     | get_T (Const (_,T)) = T
     | get_T (_ $ (Free (_,Type (_, [_, T])))) = T (* Case of snd was constructed *)
     | get_T _ = error "Internal error: Forgotten type"
-in
-  List.foldr (I #-> plus)
-  (case fun_to_time (#ctxt wctxt) (#origins wctxt) func (* add case for abs *)
-    of SOME t => SOME (list_comb (t, funcc_conv_args wctxt (get_T t) args))
+  val func = (case fun_to_time (#ctxt wctxt) (#origins wctxt) func
+    of SOME t => SOME (list_comb (t, funcc_conv_args partial wctxt (get_T t) args))
      | NONE => NONE)
-  (map (#f wctxt) args)
+  val args = (map (#f wctxt) args)
+in
+  if not partial orelse func = NONE
+  then List.foldr (uncurry (plus partial)) func args
+  else build_option_bind (Option.valOf func) args |> SOME
 end
 
 (* Handle case terms *)
@@ -436,85 +452,90 @@ fun casecLastTyp (Type (n, [T1,T2])) = Type (n, [T1, change_typ T2])
 fun casecTyp (Type (n, [T1, T2])) =
       Type (n, [change_typ T1, (if casecIsCase T2 then casecTyp else casecLastTyp) T2])
   | casecTyp _ = error "Internal error: Invalid case type"
-fun casecAbs f (Abs (v,Ta,t)) = (case casecAbs f (subst_bound (Free (v,Ta), t))
+fun casecAbs partial f (Abs (v,Ta,t)) = (case casecAbs partial f (subst_bound (Free (v,Ta), t))
                                   of (nconst,t) => (nconst,absfree (v,Ta) t))
-  | casecAbs f t = (case f t of NONE => (false,HOLogic.zero) | SOME t => (true,t))
-fun casecArgs _ [t] = (false, [map_aterms use_origin t])
-  | casecArgs f (t::ar) =
-    (case casecAbs f t of (nconst, tt) =>
-      casecArgs f ar ||> (fn ar => tt :: ar) |>> (if nconst then K true else I))
-  | casecArgs _ _ = error "Internal error: Invalid case term"
-fun casec wctxt (Const (t,T)) args =
+  | casecAbs partial f t = (case f t of NONE => (false,opt_term partial NONE) | SOME t => (true,t))
+fun casecArgs _ _ [t] = (false, [map_aterms use_origin t])
+  | casecArgs partial f (t::ar) =
+    (case casecAbs partial f t of (nconst, tt) =>
+      casecArgs partial f ar ||> (fn ar => tt :: ar) |>> (if nconst then K true else I))
+  | casecArgs _ _ _ = error "Internal error: Invalid case term"
+fun casec partial wctxt (Const (t,T)) args =
   if not (casecIsCase T) then error "Internal error: Invalid case type" else
-    let val (nconst, args') = casecArgs (#f wctxt) args in
-      plus
+    let val (nconst, args') = casecArgs partial (#f wctxt) args in
+      plus partial
         ((#f wctxt) (List.last args))
         (if nconst then
           SOME (list_comb (Const (t,casecTyp T), args'))
          else NONE)
     end
-  | casec _ _ _ = error "Internal error: Invalid case term"
+  | casec _ _ _ _ = error "Internal error: Invalid case term"
 
 (* Handle if terms -> drop the term if true and false terms are zero *)
-fun ifc wctxt _ cond tt ft =
+fun ifc partial wctxt _ cond tt ft =
   let
     val f = #f wctxt
     val rcond = map_aterms use_origin cond
     val tt = f tt
     val ft = f ft
   in
-    plus (f cond) (case (tt,ft) of (NONE, NONE) => NONE | _ =>
+    plus partial (f cond) (case (tt,ft) of (NONE, NONE) => NONE | _ =>
        if tt = ft then tt else
-       (SOME ((Const (@{const_name "HOL.If"}, @{typ "bool \<Rightarrow> nat \<Rightarrow> nat \<Rightarrow> nat"})) $ rcond $ (opt_term tt) $ (opt_term ft))))
+       (SOME ((Const (@{const_name "HOL.If"}, @{typ "bool \<Rightarrow> _ \<Rightarrow> _ \<Rightarrow> _"})) $ rcond
+          $ (opt_term partial tt) $ (opt_term partial ft))))
   end
 
-fun letc_lambda wctxt T (t as Abs _) =
+fun letc_lambda partial wctxt T (t as Abs _) =
       HOLogic.mk_prod (map_aterms use_origin t, 
-       Term.strip_abs_eta (strip_type T |> fst |> length) t ||> #f wctxt ||> opt_term |> list_abs)
-  | letc_lambda _ _ t = map_aterms use_origin t
-fun letc wctxt expT exp ([(nm,_)]) t =
-      plus (#f wctxt exp)
+       Term.strip_abs_eta (strip_type T |> fst |> length) t ||> #f wctxt ||> opt_term partial ||> map_types change_typ |> list_abs)
+  | letc_lambda _ _ _ t = map_aterms use_origin t
+fun letc partial wctxt expT exp ([(nm,_)]) t =
+      plus partial (#f wctxt exp)
       (case #f wctxt t of SOME t' =>
         (if Term.used_free nm t'
          then
           let
-            val exp' = letc_lambda wctxt expT exp
+            val exp' = letc_lambda partial wctxt expT exp
             val t' = list_abs ([(nm,fastype_of exp')], t')
           in
-            Const (@{const_name "HOL.Let"}, [fastype_of exp', fastype_of t'] ---> HOLogic.natT) $ exp' $ t'
+            Const (@{const_name "HOL.Let"}, [fastype_of exp', fastype_of t'] ---> Term.dummyT) $ exp' $ t'
           end
          else t') |> SOME
       | NONE => NONE)
-  | letc _ _ _ _ _ = error "Unknown let state"
+  | letc _ _ _ _ _ _ = error "Unknown let state"
 
-fun constc _ (Const ("HOL.undefined", _)) = SOME (Const ("HOL.undefined", @{typ "nat"}))
+fun constc _ (Const ("HOL.undefined", _)) = SOME (Const ("HOL.undefined", Term.dummyT))
   | constc _ _ = NONE
 
 (* The converter for timing functions given to the walker *)
-val converter : term option converter = {
+fun converter partial : term option converter = {
         constc = constc,
-        funcc = funcc,
-        ifc = ifc,
-        casec = casec,
-        letc = letc
+        funcc = funcc partial,
+        ifc = ifc partial,
+        casec = casec partial,
+        letc = letc partial
     }
-fun top_converter is_rec _ _ = opt_term o (fn exp => plus exp (if is_rec then SOME one else NONE))
+fun top_converter is_rec _ _ = opt_term false o (fn exp => plus false exp (if is_rec then SOME one else NONE))
+fun partial_top_converter _ _ t = (case t of NONE => @{term "Some (0::nat)"} | SOME t => t)
 
 (* Use converter to convert right side of a term *)
 fun to_time ctxt origin is_rec term =
-  top_converter is_rec ctxt origin (walk ctxt origin converter term)
+  top_converter is_rec ctxt origin (walk ctxt origin (converter false) term)
+fun partial_to_time ctxt origin _ term =
+  partial_top_converter ctxt origin (walk ctxt origin (converter true) term)
 
 (* Converts a term to its running time version *)
-fun convert_term ctxt (origin: term list) is_rec (pT $ (Const (eqN, _) $ l $ r)) =
+fun convert_term ctxt (origin: term list) is_rec partial (pT $ (Const (eqN, _) $ l $ r)) =
 let
   val (l_const, l_params) = strip_comb l
 in
     pT
-    $ (Const (eqN, @{typ "nat \<Rightarrow> nat \<Rightarrow> bool"})
+    $ (Const (eqN, @{typ "_ \<Rightarrow> _ \<Rightarrow> bool"})
       $ (list_comb (l_const |> fun_to_time ctxt origin |> Option.valOf, l_params |> conv_args ctxt))
-      $ (to_time ctxt origin is_rec r))
+      $ ((if partial then partial_to_time else to_time) ctxt origin is_rec r))
+    (* |> Syntax.check_term ctxt *)
 end
-  | convert_term _ _ _ _ = error "Internal error: invalid term to convert"
+  | convert_term _ _ _ _ _ = error "Internal error: invalid term to convert"
 
 (* 3.5 Support for locales *)
 fun replaceFstSndFree ctxt (origin: term list) (rfst: term -> term) (rsnd: term -> term) =
@@ -745,7 +766,12 @@ in
 end
 
 (* Register timing function of a given function *)
-fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) print simp =
+type time_config = {
+  print: bool,
+  simp: bool,
+  partial: bool
+}
+fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) (config: time_config) =
   let
     val _ =
       case time_term lthy true (hd term)
@@ -796,10 +822,10 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
         then Free (fun_name_to_time lthy false nm,strip_type T |>> tl |> (op --->))
         else t)
       | fSnd t = t
-    val T_terms = map (convert_term lthy term is_rec) terms
+    val T_terms = map (convert_term lthy term is_rec (#partial config)) terms
       |> map (map_r (replaceFstSndFree lthy term fFst fSnd))
 
-    val simpables = (if simp
+    val simpables = (if #simp config
       then find_simplifyble lthy term T_terms
       else map (K []) term)
       |> (fn s => ListPair.zip (term,s))
@@ -831,7 +857,7 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) prin
       |> Config.put show_sorts false (* Change it for debugging *)
     val print_ctxt = List.foldl (fn (term, ctxt) => Variable.add_fixes_implicit term ctxt) print_ctxt (term @ T_terms)
     (* Print result if print *)
-    val _ = if not print then () else
+    val _ = if not (#print config) then () else
         let
           val nms = map (dest_Const_name) term
           val typs = map (dest_Const_type) term
@@ -906,8 +932,8 @@ fun proove_termination (term: term list) terms (T_info: Function.info, lthy: loc
   in
     (time_info, lthy')
   end
-fun reg_and_proove_time_func (lthy: local_theory) (term: term list) (terms: term list) print simp =
-  reg_time_func lthy term terms print simp
+fun reg_and_proove_time_func (lthy: local_theory) (term: term list) (terms: term list) (config: time_config) =
+  reg_time_func lthy term terms config
   |> proove_termination term terms
 
 fun isTypeClass' (Const (nm,_)) =
@@ -945,43 +971,60 @@ fun check_opts [] = false
   | check_opts ["no_simp"] = true
   | check_opts (a::_) = error ("Option " ^ a ^ " is not defined")
 
-(* Convert function into its timing function (called by command) *)
+(* Converts a function into its timing function using fun *)
 fun reg_time_fun_cmd ((opts, funcs), thms) (ctxt: local_theory) =
 let
   val no_simp = check_opts opts
   val fterms = map (Syntax.read_term ctxt) funcs
   val ctxt = set_suffix fterms ctxt
+  val config = { print = true, simp = not no_simp, partial = false }
   val (_, ctxt') = reg_and_proove_time_func ctxt fterms
     (case thms of NONE => get_terms ctxt (hd fterms)
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
-    true (not no_simp)
+    config
 in ctxt'
 end
 
-(* Convert function into its timing function (called by command) with termination proof provided by user*)
+(* Converts a function into its timing function using function with termination proof provided by user*)
 fun reg_time_function_cmd ((opts, funcs), thms) (ctxt: local_theory) =
 let
   val no_simp = check_opts opts
   val fterms = map (Syntax.read_term ctxt) funcs
   val ctxt = set_suffix fterms ctxt
+  val config = { print = true, simp = not no_simp, partial = false }
   val ctxt' = reg_time_func ctxt fterms
     (case thms of NONE => get_terms ctxt (hd fterms)
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
-    true (not no_simp)
+    config
     |> snd
 in ctxt'
 end
 
-(* Convert function into its timing function (called by command) *)
+(* Converts a function definition into its timing function using definition *)
 fun reg_time_definition_cmd ((opts, funcs), thms) (ctxt: local_theory) =
 let
   val no_simp = check_opts opts
   val fterms = map (Syntax.read_term ctxt) funcs
   val ctxt = set_suffix fterms ctxt
+  val config = { print = true, simp = not no_simp, partial = false }
   val (_, ctxt') = reg_and_proove_time_func ctxt fterms
     (case thms of NONE => get_terms ctxt (hd fterms) |> check_definition
                 | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
-    true (not no_simp)
+    config
+in ctxt'
+end
+
+(* Converts a a partial function into its timing function using partial_function *)
+fun reg_time_partial_function_cmd ((opts, funcs), thms) (ctxt: local_theory) =
+let
+  val no_simp = check_opts opts
+  val fterms = map (Syntax.read_term ctxt) funcs
+  val ctxt = set_suffix fterms ctxt
+  val config = { print = true, simp = not no_simp, partial = true }
+  val (_, ctxt') = reg_and_proove_time_func ctxt fterms
+    (case thms of NONE => get_terms ctxt (hd fterms) |> check_definition
+                | SOME thms => thms |> Attrib.eval_thms ctxt |> List.map Thm.prop_of)
+    config
 in ctxt'
 end
 
@@ -1000,5 +1043,9 @@ val _ = Outer_Syntax.local_theory @{command_keyword "time_function"}
 val _ = Outer_Syntax.local_theory @{command_keyword "time_definition"}
   "Defines runtime function of a definition"
   (parser >> reg_time_definition_cmd)
+
+val _ = Outer_Syntax.local_theory @{command_keyword "time_partial_function"}
+  "Defines runtime function of a definition"
+  (parser >> reg_time_partial_function_cmd)
 
 end
