@@ -359,7 +359,9 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) (con
     (* Const (@{const_name "Groups.zero"}, HOLogic.natT) *)
     val zero = if #partial config then @{term "Some (0::nat)"} else HOLogic.zero
     val one = Const (@{const_name "Groups.one"}, HOLogic.natT)
-    val finT = if #partial config then @{typ "nat option"} else HOLogic.natT
+    val natOptT = @{typ "nat option"}
+    val finT = if #partial config then natOptT else HOLogic.natT
+    val some = @{term "Some::nat \<Rightarrow> nat option"}
 
     (* change type of original function to new type (_ \<Rightarrow> ... \<Rightarrow> _ to _ \<Rightarrow> ... \<Rightarrow> nat)
         and replace all function arguments f with (t*T_f) if used *)
@@ -384,8 +386,10 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) (con
                 (if is_Used T' then [i] else []) @ col_Used (i+1) Ts Ts'
                 | col_Used i (Type ("fun", [_, Ts])) (Type ("fun", [_, Ts'])) = col_Used (i+1) Ts Ts'
                 | col_Used _ _ _ = []
+              val binderT = change_typ' (contains (col_Used 0 T T_T)) T |> Term.binder_types
+              val finT = Term.body_type T_T
             in
-              SOME (Const (T_nm,change_typ' (contains (col_Used 0 T T_T)) T))
+              SOME (Const (T_nm, binderT ---> finT))
             end
            | _ => error ("Timing function of " ^ nm ^ " is not defined")
     end
@@ -427,9 +431,15 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) (con
     val OPTION_BIND = @{term "Option.bind::nat option \<Rightarrow> (nat \<Rightarrow> nat option) \<Rightarrow> nat option"}
     fun OPTION_ABS_SUC args = Term.absfree ("_uu", @{typ nat})
       (List.foldr (uncurry plus)
-        (SOME (@{term "Some::nat \<Rightarrow> nat option"} $ HOLogic.mk_Suc (Free ("_uu", @{typ nat})))) args |> Option.valOf)
+        (SOME (some $ HOLogic.mk_Suc (Free ("_uu", @{typ nat})))) args |> Option.valOf)
     fun build_option_bind term args =
       OPTION_BIND $ term $ OPTION_ABS_SUC args
+    fun WRAP_FUNCTION t =
+      if (Term.head_of t |> Term.fastype_of |> Term.body_type) = finT
+      then t
+      else if #partial config
+            then some $ t
+            else @{term "the::nat option \<Rightarrow> nat"} $ t
 
     (* Handle function calls *)
     fun build_zero (Type ("fun", [T, R])) = Abs ("uu", T, build_zero R)
@@ -472,7 +482,7 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) (con
         | get_T (_ $ (Free (_,Type (_, [_, T])))) = T (* Case of snd was constructed *)
         | get_T _ = error "Internal error: Forgotten type"
       val func = (case fun_to_time (#ctxt wctxt) (#origins wctxt) func
-        of SOME t => SOME (list_comb (t, funcc_conv_args wctxt (get_T t) args))
+        of SOME t => SOME (WRAP_FUNCTION (list_comb (t, funcc_conv_args wctxt (get_T t) args)))
          | NONE => NONE)
       val args = (map (#f wctxt) args)
     in
@@ -601,7 +611,7 @@ fun reg_time_func (lthy: local_theory) (term: term list) (terms: term list) (con
         | filter_passed ((f as Free (_, Type ("Product_Type.prod",[Type ("fun",_), Type ("fun", _)])))::args) = 
             f :: filter_passed args
         | filter_passed (_::args) = filter_passed args
-      val frees = (walk @{context} [] {
+      val frees = (walk lthy [] {
               funcc = (fn wctxt => fn t => fn args =>
                   (case t of (Const ("Product_Type.prod.snd", _)) => []
                       | _ => (if t = T_ident then [] else filter_passed args)

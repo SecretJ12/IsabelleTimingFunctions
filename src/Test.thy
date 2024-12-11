@@ -492,4 +492,10 @@ lemma "\<forall>n \<in> {2..20}. T_collatz n = T_collatz' n"
   apply (rule setIt, simp add: T_collatz.simps T_collatz'.simps, simp)+
   by (simp add: T_collatz.simps T_collatz'.simps)
 
+partial_function (tailrec) partdummy :: "nat \<Rightarrow> nat" where
+  "partdummy n = dummy n"
+definition "user k = partdummy k"
+time_partial_function partdummy
+time_fun user
+
 end
